@@ -1,0 +1,9 @@
+[binance]
+base_url = "https://data.binance.vision"
+exchange = "binance"
+market_type = "spot"
+symbol = "BTCUSDT"
+timeframes = ["1m", "5m", "15m"]
+
+[paths]
+data_root = "data"

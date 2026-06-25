@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+data/raw/
+data/normalized/
+data/features/
+data/signals/
+data/reports/
+data/mlflow/
+data/metadata/
+*.duckdb
+user_data/backtest_results/
+user_data/logs/
+user_data/data/
