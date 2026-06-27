@@ -18,6 +18,8 @@ dependencies = [
     "mlflow>=2.11.0",
     "evidently>=0.4.17",
     "flaml[blendsearch]>=2.1.2",
+    "customtkinter>=5.2.2",
+    "pyinstaller>=6.0.0",
 ]
 
 [project.optional-dependencies]
