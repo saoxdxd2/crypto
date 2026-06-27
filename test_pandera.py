@@ -7,8 +7,8 @@ class TestModel(pa.DataFrameModel):
 
     @pa.dataframe_check
     @classmethod
-    def check_ab(cls, df: pl.DataFrame) -> pl.Series:
-        return df["a"] < df["b"]
+    def check_ab(cls, data: Any) -> pl.LazyFrame:
+        return data.lazyframe.select(pl.col("a") < pl.col("b"))
 
 df = pl.DataFrame({"a": [1, 2], "b": [2, 3]})
 print("Validating with @classmethod...")

@@ -1,0 +1,16 @@
+version: '3'
+services:
+  freqtrade:
+    image: freqtradeorg/freqtrade:stable
+    # Restart policy is disabled for backtesting. Enable for dry-run/live.
+    restart: "no"
+    container_name: freqtrade
+    volumes:
+      - "./user_data:/freqtrade/user_data"
+    # The default command is to run the bot. Override this via CLI to run backtests.
+    command: >
+      trade
+      --logfile /freqtrade/user_data/logs/freqtrade.log
+      --db-url sqlite:////freqtrade/user_data/tradesv3.sqlite
+      --config /freqtrade/user_data/config.json
+      --strategy SignalStrategy

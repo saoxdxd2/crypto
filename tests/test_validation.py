@@ -33,15 +33,17 @@ def test_validate_candles_accepts_valid_closed_candles() -> None:
     assert validate_candles(valid_candles()).height == 2
 
 
+import pandera.errors as pa_errors
+
 def test_validate_candles_rejects_bad_ohlc() -> None:
     df = valid_candles().with_columns(pl.lit(200.0).alias("low"))
 
-    with pytest.raises(ValueError, match="OHLC"):
+    with pytest.raises(pa_errors.SchemaError):
         validate_candles(df)
 
 
 def test_validate_candles_rejects_incomplete_candle() -> None:
     df = valid_candles().with_columns(pl.lit(False).alias("is_closed"))
 
-    with pytest.raises(ValueError, match="closed"):
+    with pytest.raises(pa_errors.SchemaError):
         validate_candles(df)

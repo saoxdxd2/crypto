@@ -42,13 +42,13 @@ class CandleSchema(pa.DataFrameModel):
 
     @pa.dataframe_check
     @classmethod
-    def check_open_lt_close_time(cls, df: Any) -> pl.Expr:
-        return pl.col("open_time") < pl.col("close_time")
+    def check_open_lt_close_time(cls, df: Any) -> pl.LazyFrame:
+        return df.lazyframe.select(pl.col("open_time") < pl.col("close_time"))
 
     @pa.dataframe_check
     @classmethod
-    def check_ohlc_consistency(cls, df: Any) -> pl.Expr:
-        return (
+    def check_ohlc_consistency(cls, df: Any) -> pl.LazyFrame:
+        return df.lazyframe.select(
             (pl.col("low") <= pl.col("open")) &
             (pl.col("low") <= pl.col("high")) &
             (pl.col("low") <= pl.col("close")) &
@@ -58,14 +58,14 @@ class CandleSchema(pa.DataFrameModel):
 
     @pa.dataframe_check
     @classmethod
-    def check_is_closed(cls, df: Any) -> pl.Expr:
-        return pl.col("is_closed") == True
+    def check_is_closed(cls, df: Any) -> pl.LazyFrame:
+        return df.lazyframe.select(pl.col("is_closed") == True)
 
     @pa.dataframe_check
     @classmethod
-    def check_future_time(cls, df: Any) -> pl.Expr:
+    def check_future_time(cls, df: Any) -> pl.LazyFrame:
         now = datetime.now(UTC).replace(tzinfo=None)
-        return pl.col("open_time") <= now
+        return df.lazyframe.select(pl.col("open_time") <= now)
 
 
 def validate_candles(df: pl.DataFrame, *, allowed_gap_multiplier: int = 2) -> pl.DataFrame:
