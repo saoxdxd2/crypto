@@ -10,7 +10,24 @@ data/signals/
 data/reports/
 data/mlflow/
 data/metadata/
+data/trades/
+*.lock
 *.duckdb
+*.gguf
 user_data/backtest_results/
 user_data/logs/
 user_data/data/
+
+test.exe
+test.pdb
+build/
+dist/
+logs/
+checkpoints/
+
+# Zig execution engine cache and output
+zig-cache/
+zig-out/
+
+# Kaggle build directory
+kaggle_build/

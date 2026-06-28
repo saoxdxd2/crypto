@@ -12,7 +12,6 @@ dependencies = [
     "requests>=2.32.0",
     "typer>=0.12.0",
     "pandera>=0.32.0",
-    "timesfm>=2.0.0",
     "google-genai>=0.1.1",
     "websockets>=12.0",
     "mlflow>=2.11.0",
@@ -20,6 +19,19 @@ dependencies = [
     "flaml[blendsearch]>=2.1.2",
     "customtkinter>=5.2.2",
     "pyinstaller>=6.0.0",
+    "transformers>=4.40.0",
+    "peft>=0.11.0",
+    "llama-cpp-python>=0.2.77",
+    "huggingface-hub>=0.23.0",
+    "paramiko>=3.4.0",
+    "rich>=13.7.0",
+    "onnx>=1.16.0",
+    "customtkinter>=5.2.2",
+    "pyinstaller>=6.5.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.1",
+    "filelock>=3.14.0",
+    "kaggle>=1.6.14",
 ]
 
 [project.optional-dependencies]
