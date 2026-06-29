@@ -46,6 +46,7 @@ class LivePaperTrader:
                 except:
                     pass
             signals.append(sig.model_dump())
+            signals = signals[-100:] # Prevent OOM infinite disk growth
             SIG_FILE.write_text(json.dumps(signals))
 
     def _save_trade(self, trade: TradeRecord):
@@ -139,14 +140,15 @@ class LivePaperTrader:
                     logger.info(f"OPEN SHORT at ${price:.2f}")
                     push_sys_event("ALLOW", f"Momentum breakdown detected. OPEN SHORT at ${price:.2f}", progress=0.5)
             else:
-                pnl = price - self.active_trade.entry_price if self.active_trade.side == TradeSide.LONG else self.active_trade.entry_price - price
-                if pnl > config.take_profit_usd or pnl < -config.stop_loss_usd or random.random() < config.random_exit_prob:
+                price_delta = price - self.active_trade.entry_price if self.active_trade.side == TradeSide.LONG else self.active_trade.entry_price - price
+                actual_pnl = price_delta * self.active_trade.size
+                if actual_pnl > config.take_profit_usd or actual_pnl < -config.stop_loss_usd or random.random() < config.random_exit_prob:
                     self.active_trade.exit_price = price
-                    self.active_trade.pnl = round(pnl, 2)
+                    self.active_trade.pnl = round(actual_pnl, 2)
                     self.active_trade.status = TradeStatus.CLOSED
                     self._save_trade(self.active_trade)
-                    logger.info(f"CLOSED {self.active_trade.side} at ${price:.2f} | PnL: ${pnl:.2f}")
-                    push_sys_event("REDUCE" if pnl < 0 else "ALLOW", f"Trade closed. PnL: ${pnl:.2f}", progress=1.0)
+                    logger.info(f"CLOSED {self.active_trade.side} at ${price:.2f} | PnL: ${actual_pnl:.2f}")
+                    push_sys_event("REDUCE" if actual_pnl < 0 else "ALLOW", f"Trade closed. PnL: ${actual_pnl:.2f}", progress=1.0)
                     self.active_trade = None
 
     async def run_async(self):

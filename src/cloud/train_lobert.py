@@ -63,11 +63,10 @@ def train(args):
     for epoch in range(args.epochs):
         epoch_loss = 0.0
         
-        for step, (messages, timestamps) in enumerate(loader):
+        for step, (messages, timestamps, targets) in enumerate(loader):
             messages = messages.to(device)
             timestamps = timestamps.to(device)
-            
-            targets = torch.rand(messages.size(0)).to(device)
+            targets = targets.to(device)
             
             with autocast(enabled=args.fp16):
                 outputs = model(messages, timestamps)

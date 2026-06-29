@@ -158,7 +158,7 @@ Output exactly in this JSON format:
                     # Write to decoupled state file for fast loops to read
                     regime_path = Path("data/metadata/regime.json")
                     regime_path.parent.mkdir(parents=True, exist_ok=True)
-                    regime_path.write_text(json.dumps({"is_safe": is_safe_val, "summary": generator_json.get("regime_summary", "")}))
+                    regime_path.write_text(json.dumps({"is_safe": is_safe_val, "regime_summary": generator_json.get("regime_summary", "")}))
                     
                     return {
                         "regime_summary": generator_json.get("regime_summary", "Unknown regime"),
@@ -181,7 +181,7 @@ Output exactly in this JSON format:
         
         regime_path = Path("data/metadata/regime.json")
         regime_path.parent.mkdir(parents=True, exist_ok=True)
-        regime_path.write_text(json.dumps({"is_safe": False, "summary": "Loop consensus failed. Safety triggered."}))
+        regime_path.write_text(json.dumps({"is_safe": False, "regime_summary": "Loop consensus failed. Safety triggered."}))
         
         return {
             "regime_summary": "Loop consensus failed. Safety triggered.",

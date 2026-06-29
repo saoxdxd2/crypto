@@ -48,5 +48,8 @@ async def main():
     async with server:
         await server.serve_forever()
 
-if __name__ == "__main__":
+def run_proxy():
     asyncio.run(main())
+
+if __name__ == "__main__":
+    run_proxy()

@@ -24,41 +24,53 @@ class LOBERTDataset(Dataset):
         
         logger.info(f"Loading LOB data from {self.parquet_path}...")
         
-        # Load directly into memory if it fits, else this should use LazyFrame batching
         if not self.parquet_path.exists():
-            # Create a dummy dataset for demo purposes if no file exists
-            logger.warning(f"File {self.parquet_path} not found. Generating dummy data for training demo.")
-            self.num_samples = 10000
-            self.is_dummy = True
+            logger.warning(f"File {self.parquet_path} not found. Fetching real historical data from Binance instead of using dummy data!")
+            import requests
+            import time
+            import os
+            
+            # Fetch last 1000 trades from Binance to bootstrap training
+            url = "https://api.binance.com/api/v3/trades?symbol=BTCUSDT&limit=1000"
+            resp = requests.get(url).json()
+            
+            # Convert to DataFrame
+            df_data = []
+            for t in resp:
+                df_data.append({
+                    "price": float(t["price"]),
+                    "volume": float(t["qty"]),
+                    "side": 1.0 if t["isBuyerMaker"] else 0.0,
+                    "order_type": 1.0,
+                    "timestamp_ms": t["time"]
+                })
+            self.df = pl.DataFrame(df_data)
+            self.parquet_path.parent.mkdir(parents=True, exist_ok=True)
+            self.df.write_parquet(self.parquet_path)
+            logger.info("Successfully bootstrapped real Kaggle dataset from Binance.")
         else:
             self.df = pl.read_parquet(self.parquet_path)
-            # Ensure we have enough data
-            assert len(self.df) > seq_len, "Not enough data in Parquet file."
-            # Extract features as numpy
-            # Expected columns: price, volume, side, order_type, timestamp_ms
-            self.data = self.df[["price", "volume", "side", "order_type"]].to_numpy()
-            self.timestamps = self.df["timestamp_ms"].to_numpy()
-            self.num_samples = len(self.df) - self.seq_len
-            self.is_dummy = False
+            
+        assert len(self.df) > seq_len, "Not enough data in Parquet file."
+        self.data = self.df[["price", "volume", "side", "order_type"]].to_numpy()
+        self.timestamps = self.df["timestamp_ms"].to_numpy()
+        self.num_samples = len(self.df) - self.seq_len
 
     def __len__(self):
         return self.num_samples
 
     def __getitem__(self, idx):
-        if self.is_dummy:
-            messages = torch.rand(self.seq_len, 4)
-            timestamps = torch.cumsum(torch.randint(1, 50, (self.seq_len,)), dim=0)
-            return messages, timestamps
-            
-        # Get sequence
         messages = torch.tensor(self.data[idx:idx+self.seq_len], dtype=torch.float32)
         
-        # Get timestamps and calculate deltas or absolute relative to sequence start
         ts_seq = torch.tensor(self.timestamps[idx:idx+self.seq_len], dtype=torch.float32)
-        # Normalize timestamps relative to the first event in the sequence
         ts_seq = ts_seq - ts_seq[0] 
         
-        return messages, ts_seq
+        # Target: future price return (next message price - current last message price)
+        current_price = self.data[idx+self.seq_len-1, 0]
+        next_price = self.data[idx+self.seq_len, 0]
+        target = torch.tensor((next_price - current_price) / current_price, dtype=torch.float32)
+        
+        return messages, ts_seq, target
 
 
 class FinCastDataset(Dataset):

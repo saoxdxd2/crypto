@@ -649,12 +649,10 @@ class CyberQuantDashboard(ctk.CTk):
         logger.info("Go Orchestrator started.")
 
         # 1.5 Start TLS Proxy (Binance WSS -> Local TCP 9000)
-        proxy_path = resource_path(os.path.join("src", "data", "tls_proxy.py"))
-        p_proxy = subprocess.Popen(
-            [sys.executable, proxy_path], 
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
-            env=env, creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        )
+        import multiprocessing
+        from src.data.tls_proxy import run_proxy
+        p_proxy = multiprocessing.Process(target=run_proxy, daemon=True)
+        p_proxy.start()
         self.cloud_processes.append(p_proxy)
         logger.info("TLS Proxy started on port 9000.")
 
@@ -698,7 +696,10 @@ class CyberQuantDashboard(ctk.CTk):
         for p in self.cloud_processes:
             try:
                 p.terminate()
-                p.wait(timeout=1)
+                if hasattr(p, 'wait'):
+                    p.wait(timeout=1)
+                elif hasattr(p, 'join'):
+                    p.join(timeout=1)
             except subprocess.TimeoutExpired:
                 logger.warning(f"Process {p.pid} hung on terminate. Forcing kill.")
                 p.kill()
@@ -797,18 +798,29 @@ class CyberQuantDashboard(ctk.CTk):
 
     def _check_chat_server(self):
         import urllib.request
-        try:
-            # We just do a dummy request to see if it responds or 404s
-            req = urllib.request.Request("http://localhost:5001/", method="GET")
-            urllib.request.urlopen(req, timeout=2)
-        except Exception as e:
-            # 404 means server is up (since only /generate is handled)
-            if hasattr(e, 'code') and e.code == 404:
+        import time
+        max_retries = 30
+        for i in range(max_retries):
+            try:
+                # We just do a dummy request to see if it responds or 404s
+                req = urllib.request.Request("http://localhost:5001/", method="GET")
+                urllib.request.urlopen(req, timeout=2)
+                # If no exception, server is up but returned 200 (unexpected but okay)
                 self.after(0, lambda: self._append_chat("SYSTEM", "Connected to Shared LLM!", GREEN))
                 self.chat_ready = True
-            else:
-                self.after(0, lambda: self._append_chat("SYSTEM", f"Warning: LLM Server not reachable ({e}). Is runner.py active?", RED))
-                self.chat_ready = False
+                return
+            except Exception as e:
+                # 404 means server is up (since only /generate is handled)
+                if hasattr(e, 'code') and e.code == 404:
+                    self.after(0, lambda: self._append_chat("SYSTEM", "Connected to Shared LLM!", GREEN))
+                    self.chat_ready = True
+                    return
+                # Otherwise, it's probably booting up. Sleep and retry.
+                time.sleep(1)
+        
+        # If we exhausted retries
+        self.after(0, lambda: self._append_chat("SYSTEM", f"Warning: LLM Server not reachable after {max_retries}s. Is it still loading?", RED))
+        self.chat_ready = False
 
     def _append_chat(self, sender: str, msg: str, color: str = TEXT_MAIN):
         if not hasattr(self, "chat_history") or not self.chat_history.winfo_exists():
