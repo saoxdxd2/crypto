@@ -22,7 +22,7 @@ from src.cloud.data_loaders import LOBERTDataset
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-HF_TOKEN = "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"
+HF_TOKEN = os.environ.get("HF_TOKEN")
 REPO_ID = "sao/LOBERT-crypto-v1"
 
 def train(args):

@@ -6,7 +6,7 @@ from src.core.sys_events import push_sys_event
 import subprocess
 import sys
 
-logger = logging.getLogger(__name__)
+from src.core.logger import logger
 
 KAGGLE_DIR = Path("kaggle_build")
 
@@ -28,9 +28,23 @@ def build_kernel_metadata():
     (KAGGLE_DIR / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2))
     
 def build_training_script():
-    script_content = '''
+    hf_token = os.environ.get("HF_TOKEN", "")
+    if not hf_token:
+        try:
+            env_content = Path(".env").read_text(encoding="utf-8")
+            for line in env_content.splitlines():
+                if line.startswith("HF_TOKEN="):
+                    hf_token = line.split("=", 1)[1].strip('"').strip("'")
+                    break
+        except Exception:
+            pass
+    
+    script_content = f'''
 import os
 import subprocess
+
+os.environ["HF_TOKEN"] = "{hf_token}"
+
 print("Cloning repository...")
 subprocess.run(["git", "clone", "https://github.com/saoxdxd2/crypto.git"], check=True)
 os.chdir("crypto")
@@ -105,6 +119,15 @@ def submit_training_job():
                         push_sys_event("SYSTEM", "Kaggle Cloud Status: RUNNING (Training LOBERT on GPU)", progress=0.5)
                     elif status_lower == "complete":
                         push_sys_event("SYSTEM", "Kaggle Cloud Status: COMPLETE (Training Finished)", progress=1.0)
+                        logger.info("Training complete! Pulling newly trained model back to local machine...")
+                        push_sys_event("SYSTEM", "Downloading updated LOBERT weights from Hugging Face Hub...", progress=1.0)
+                        try:
+                            subprocess.run(["huggingface-cli", "download", "saoxdxd2/LOBERT-crypto-v1", "lobert_checkpoint.pt", "--local-dir", "checkpoints"], check=True)
+                            logger.info("Successfully downloaded new LOBERT weights to local checkpoints directory.")
+                            push_sys_event("SYSTEM", "New LOBERT weights installed! Ready for Native Inference.", progress=1.0)
+                        except Exception as dl_err:
+                            logger.error(f"Failed to download new model: {dl_err}")
+                            push_sys_event("ERROR", "Failed to download new weights from Hugging Face.")
                         break
                     elif status_lower in ["error", "failed", "cancel"]:
                         push_sys_event("ERROR", f"Kaggle Cloud Status: {status_lower.upper()} (Check Kaggle logs)")

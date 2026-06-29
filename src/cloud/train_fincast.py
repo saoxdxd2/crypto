@@ -23,7 +23,7 @@ from src.cloud.data_loaders import FinCastDataset
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-HF_TOKEN = "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"
+HF_TOKEN = os.environ.get("HF_TOKEN")
 REPO_ID = "sao/FinCast-crypto-v1"
 
 def train(args):

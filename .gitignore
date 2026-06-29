@@ -31,3 +31,6 @@ zig-out/
 
 # Kaggle build directory
 kaggle_build/
+
+# Environment variables (API Keys)
+.env

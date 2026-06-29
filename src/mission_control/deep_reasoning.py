@@ -16,7 +16,7 @@ from typing import Any
 from huggingface_hub import hf_hub_download
 from llama_cpp import Llama
 
-logger = logging.getLogger(__name__)
+from src.core.logger import logger
 
 # The Arbiter: Highly capable 0.6B parameter instruction-tuned model in 4-bit
 REPO_ID = "unsloth/Qwen3-0.6B-GGUF"

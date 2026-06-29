@@ -10,7 +10,7 @@ from filelock import FileLock
 from src.core.sys_events import push_sys_event
 from src.core.models import TradeRecord, SignalRecord, TradeSide, TradeStatus, config
 
-logger = logging.getLogger(__name__)
+from src.core.logger import logger
 
 SIG_DIR = config.data_dir / "signals"
 TRADES_DIR = config.data_dir / "trades"

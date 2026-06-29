@@ -311,7 +311,7 @@ class CyberQuantDashboard(ctk.CTk):
         frame.grid(row=0, column=0, sticky="nsew", pady=(0, 8))
 
         ctk.CTkLabel(
-            frame, text="📰 Gemini Risk Engine",
+            frame, text="📰 Qwen Risk Engine",
             font=ctk.CTkFont(size=15, weight="bold")
         ).pack(anchor="w", padx=16, pady=(12, 6))
 

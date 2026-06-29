@@ -47,8 +47,10 @@ class NewsExtractor:
     Extracts events from raw headlines/news text and generates a strict Risk Modifier JSON using Gemini.
     """
 
-    def __init__(self, api_key: str = "AQ.Ab8RN6IR5mS3eUS848rgh-Pg9qLSidV46YTHi1rCzz0WZ44oFw") -> None:
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self, api_key: str = None) -> None:
+        import os
+        key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        self.client = genai.Client(api_key=key)
 
     def extract_event(self, symbol: str, raw_text: str, sources: list[str]) -> dict[str, object]:
         """
