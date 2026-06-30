@@ -76,7 +76,7 @@ class FinCastModel(nn.Module):
             batch_first=True,
             norm_first=True
         )
-        self.decoder = nn.TransformerEncoder(decoder_layer, num_layers=num_layers)
+        self.decoder = nn.TransformerEncoder(decoder_layer, num_layers=num_layers, enable_nested_tensor=False)
         
         # Forecast Head (predicting next return)
         self.forecast_head = nn.Linear(d_model, 1)

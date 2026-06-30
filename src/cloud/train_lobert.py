@@ -82,7 +82,14 @@ def train(args):
         logger.info("⚡ Compiling model with Torch 2.0...")
         model = torch.compile(model)
         
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+    try:
+        import bitsandbytes as bnb
+        optimizer = bnb.optim.AdamW8bit(model.parameters(), lr=args.lr, weight_decay=0.01)
+        logger.info("✅ 8-bit AdamW activated (75% VRAM saving)")
+    except ImportError:
+        logger.warning("⚠️ bitsandbytes not found, falling back to standard AdamW")
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
+        
     scaler = GradScaler('cuda', enabled=args.fp16)
     
     # Auto-resume to support Continuous Learning Loop

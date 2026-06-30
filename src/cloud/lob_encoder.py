@@ -121,7 +121,7 @@ class LOBERTModel(nn.Module):
             batch_first=True,
             norm_first=True
         )
-        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers, enable_nested_tensor=False)
         
         # Downstream task head: Predict pattern score (bullish/bearish microstructure)
         self.task_head = nn.Sequential(
