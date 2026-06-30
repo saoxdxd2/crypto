@@ -130,7 +130,9 @@ class BinanceArchiveFetcher:
         # Cleanup
         if 'csv_file' in locals() and csv_file.exists():
             csv_file.unlink()
-        zip_path.unlink()
+        actual_zip = extract_dir / filename
+        if actual_zip.exists():
+            actual_zip.unlink()
         print(f"[GPU Data Agent] ✅ Successfully processed {year}-{month} trades to {output_parquet}")
         return True
 
@@ -225,7 +227,9 @@ class BinanceArchiveFetcher:
         # Cleanup
         if 'csv_file' in locals() and csv_file.exists():
             csv_file.unlink()
-        zip_path.unlink()
+        actual_zip = extract_dir / filename
+        if actual_zip.exists():
+            actual_zip.unlink()
         print(f"[GPU Data Agent] ✅ Successfully processed {year}-{month} klines to {output_parquet}")
         return True
 
