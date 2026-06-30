@@ -52,8 +52,9 @@ class BinanceArchiveFetcher:
         extract_dir = Path("temp_data")
         
         try:
+            fetch_cmd = "fast_fetch.exe" if os.name == "nt" else "./fast_fetch"
             result = subprocess.run(
-                ["./fast_fetch", url, str(zip_path), str(extract_dir)], 
+                [fetch_cmd, url, str(zip_path), str(extract_dir)], 
                 check=True, capture_output=True, text=True
             )
             print(result.stdout)
@@ -140,8 +141,9 @@ class BinanceArchiveFetcher:
         extract_dir = Path("temp_data")
         
         try:
+            fetch_cmd = "fast_fetch.exe" if os.name == "nt" else "./fast_fetch"
             result = subprocess.run(
-                ["./fast_fetch", url, str(zip_path), str(extract_dir)], 
+                [fetch_cmd, url, str(zip_path), str(extract_dir)], 
                 check=True, capture_output=True, text=True
             )
             print(result.stdout)
