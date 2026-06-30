@@ -319,8 +319,15 @@ def main():
     print("🤖 High-Efficiency Concurrent Loop Engineering Harness")
     print("="*60)
 
-    repo_root = Path(__file__).resolve().parent.parent
-    os.chdir(repo_root)
+    try:
+        repo_root = Path(__file__).resolve().parent.parent
+        os.chdir(repo_root)
+    except NameError:
+        # Interactive IPython/Colab cell execution
+        if os.path.exists("/content/crypto/crypto/scripts/fast_fetch.go"):
+            os.chdir("/content/crypto/crypto")
+        elif os.path.exists("/content/crypto/scripts/fast_fetch.go"):
+            os.chdir("/content/crypto")
     
     import shutil
     if not shutil.which("go"):
