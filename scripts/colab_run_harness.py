@@ -55,14 +55,19 @@ class BinanceArchiveFetcher:
             print(f"[GPU Data Agent] ❌ Failed to download {url}: {e}")
             return False
             
-        print(f"[GPU Data Agent] ⚡ GPU-Accelerated Extraction & Parsing of {filename}...")
+        print(f"[GPU Data Agent] ⚡ Extracting ZIP...")
+        import zipfile
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall("temp_data")
+        csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
+            
+        print(f"[GPU Data Agent] ⚡ GPU-Accelerated Parsing of CSV...")
         
         fallback_used = False
         try:
-            # cudf.read_csv automatically handles 'zip' compression and extracts on the GPU
+            # cudf.read_csv is safer when reading uncompressed CSVs to avoid C++ ZIP decompression segfaults
             df = cudf.read_csv(
-                zip_path, 
-                compression='zip', 
+                csv_file, 
                 header=None, 
                 names=["id", "price", "volume", "quoteQty", "timestamp_ms", "isBuyerMaker", "isBestMatch"],
                 dtype={
@@ -74,13 +79,8 @@ class BinanceArchiveFetcher:
             if USE_CUDF and ("memory" in str(e).lower() or "alloc" in str(e).lower() or "cuda" in str(e).lower()):
                 print(f"[GPU Data Agent] ⚠️ CUDA OOM during GPU extraction! Falling back to CPU extraction for this dataset...")
                 fallback_used = True
-                import zipfile
                 import polars as pl
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall("temp_data")
-                csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
                 df = pl.read_csv(csv_file, has_header=False, new_columns=["id", "price", "volume", "quoteQty", "timestamp_ms", "isBuyerMaker", "isBestMatch"])
-                csv_file.unlink()
             else:
                 raise e
         
@@ -104,6 +104,8 @@ class BinanceArchiveFetcher:
         df.to_parquet(output_parquet) if is_cudf_df else df.write_parquet(output_parquet)
         
         # Cleanup
+        if 'csv_file' in locals() and csv_file.exists():
+            csv_file.unlink()
         zip_path.unlink()
         print(f"[GPU Data Agent] ✅ Successfully processed {year}-{month} trades to {output_parquet}")
         return True
@@ -123,13 +125,18 @@ class BinanceArchiveFetcher:
             print(f"[GPU Data Agent] ❌ Failed to download {url}: {e}")
             return False
             
-        print(f"[GPU Data Agent] ⚡ GPU-Accelerated Extraction & Parsing of {filename}...")
+        print(f"[GPU Data Agent] ⚡ Extracting ZIP...")
+        import zipfile
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall("temp_data")
+        csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
+            
+        print(f"[GPU Data Agent] ⚡ GPU-Accelerated Parsing of CSV...")
         
         fallback_used = False
         try:
             df = cudf.read_csv(
-                zip_path, 
-                compression='zip', 
+                csv_file, 
                 header=None, 
                 names=[
                     "open_time", "open", "high", "low", "close", "volume", "close_time", 
@@ -144,16 +151,11 @@ class BinanceArchiveFetcher:
             if USE_CUDF and ("memory" in str(e).lower() or "alloc" in str(e).lower() or "cuda" in str(e).lower()):
                 print(f"[GPU Data Agent] ⚠️ CUDA OOM during GPU extraction! Falling back to CPU extraction for this dataset...")
                 fallback_used = True
-                import zipfile
                 import polars as pl
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall("temp_data")
-                csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
                 df = pl.read_csv(csv_file, has_header=False, new_columns=[
                     "open_time", "open", "high", "low", "close", "volume", "close_time", 
                     "quote_asset_volume", "trades", "taker_buy_base", "taker_buy_quote", "ignore"
                 ])
-                csv_file.unlink()
             else:
                 raise e
         
@@ -171,6 +173,8 @@ class BinanceArchiveFetcher:
         df.to_parquet(output_parquet) if is_cudf_df else df.write_parquet(output_parquet)
         
         # Cleanup
+        if 'csv_file' in locals() and csv_file.exists():
+            csv_file.unlink()
         zip_path.unlink()
         print(f"[GPU Data Agent] ✅ Successfully processed {year}-{month} klines to {output_parquet}")
         return True
@@ -318,9 +322,7 @@ def main():
             files.download("checkpoints/lobert_checkpoint.pt")
         if Path("checkpoints/fincast_checkpoint.pt").exists():
             files.download("checkpoints/fincast_checkpoint.pt")
-            
-        print("Shutting down Colab instance to save credits...")
-        runtime.unassign()
+        print("\n✅ All done! The Colab session will remain active so your downloads can finish.")
 
 if __name__ == "__main__":
     main()
