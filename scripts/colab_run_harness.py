@@ -53,7 +53,6 @@ class BinanceArchiveFetcher:
         extract_dir.mkdir(exist_ok=True)
         
         try:
-            import os
             # Use aria2c for highly optimized multi-connection downloading
             dl_cmd = f"aria2c -x 16 -s 16 -j 16 --continue=true -d {extract_dir} -o {filename} {url}"
             if os.system(dl_cmd) != 0:
@@ -148,7 +147,6 @@ class BinanceArchiveFetcher:
         extract_dir.mkdir(exist_ok=True)
         
         try:
-            import os
             # Use aria2c for highly optimized multi-connection downloading
             dl_cmd = f"aria2c -x 16 -s 16 -j 16 --continue=true -d {extract_dir} -o {filename} {url}"
             if os.system(dl_cmd) != 0:
@@ -371,7 +369,6 @@ def main():
                 sys.exit(1)
     
     import shutil
-    import os
     if IN_COLAB and not shutil.which("aria2c"):
         print("🚀 Installing aria2 and unzip for ultra-fast parallel fetching...")
         os.system("apt-get update && apt-get install -y aria2 unzip")
