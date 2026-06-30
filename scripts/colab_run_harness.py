@@ -47,6 +47,8 @@ class BinanceArchiveFetcher:
             print(f"[Data Agent] ⚡ Extracting massively via native C unzip...")
             import subprocess
             subprocess.run(["unzip", "-q", "-o", str(extract_dir / filename), "-d", str(extract_dir)], check=True)
+            
+        except Exception as e:
             print(f"[Data Agent] ❌ Download/Extraction failed: {e}")
             return False
             
@@ -92,6 +94,8 @@ class BinanceArchiveFetcher:
             print(f"[Data Agent] ⚡ Extracting massively via native C unzip...")
             import subprocess
             subprocess.run(["unzip", "-q", "-o", str(extract_dir / filename), "-d", str(extract_dir)], check=True)
+            
+        except Exception as e:
             return False
             
         csv_file = extract_dir / filename.replace(".zip", ".csv")
