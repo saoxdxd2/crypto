@@ -121,6 +121,33 @@ def train(args):
     model_dir = Path("checkpoints")
     model_dir.mkdir(exist_ok=True)
     
+    # --- ZERO-SHOT EVALUATION ---
+    model.eval()
+    val_loss = 0.0
+    correct_direction = 0
+    total_samples = 0
+    
+    with torch.no_grad():
+        for messages, timestamps, targets in val_loader:
+            messages = messages.to(device)
+            timestamps = timestamps.to(device)
+            targets = targets.to(device)
+            
+            with autocast(enabled=args.fp16):
+                outputs = model.forward_recursive(messages, timestamps)
+                loss = criterion(outputs, targets)
+            val_loss += loss.item()
+            
+            pred_up = (outputs - 0.5) > 0
+            target_up = targets > 0
+            correct_direction += (pred_up == target_up).sum().item()
+            total_samples += targets.size(0)
+            
+    val_acc = correct_direction / total_samples if total_samples > 0 else 0.0
+    val_loss_avg = val_loss / len(val_loader) if len(val_loader) > 0 else 0.0
+    
+    logger.info(f"[ZERO-SHOT EVAL] Loss: {val_loss_avg:.6f} | Directional Acc: {val_acc:.4f}")
+    
     model.train()
     for epoch in range(args.epochs):
         epoch_loss = 0.0
