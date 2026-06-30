@@ -391,9 +391,11 @@ def main():
     # Pre-seed datasets for loop 1
     lob_path = Path("data/lob_history.parquet")
     ohlcv_path = Path("data/ohlcv_history.parquet")
-    if not lob_path.exists():
+    if not lob_path.exists() or lob_path.stat().st_size < 1024 * 1024:
+        if lob_path.exists(): os.remove(lob_path)
         BinanceArchiveFetcher.fetch_trades("BTCUSDT", "2023", "01", lob_path)
-    if not ohlcv_path.exists():
+    if not ohlcv_path.exists() or ohlcv_path.stat().st_size < 1024 * 1024:
+        if ohlcv_path.exists(): os.remove(ohlcv_path)
         BinanceArchiveFetcher.fetch_klines("BTCUSDT", "2023", "01", ohlcv_path)
         
     for loop_idx in range(1, max_loops + 1):
