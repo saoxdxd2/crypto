@@ -207,6 +207,8 @@ def main():
     try:
         repo_root = Path(__file__).resolve().parent.parent
         os.chdir(repo_root)
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
     except NameError:
         # User pasted the script directly into a Jupyter notebook cell
         if IN_COLAB and Path("/content/crypto").exists():
