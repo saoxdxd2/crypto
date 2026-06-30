@@ -567,6 +567,9 @@ func extractZip(zipFile, destDir string) error {
         with open("scripts/fast_fetch.go", "w", encoding="utf-8") as f:
             f.write(go_source)
         
+    if IN_COLAB and os.path.exists("fast_fetch.exe"):
+        os.remove("fast_fetch.exe")
+        
     if not os.path.exists("fast_fetch") and not os.path.exists("fast_fetch.exe"):
         print("🚀 Compiling Go Fetcher...")
         import subprocess
