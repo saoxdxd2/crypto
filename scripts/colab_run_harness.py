@@ -52,9 +52,14 @@ class BinanceArchiveFetcher:
         extract_dir = Path("temp_data")
         
         try:
-            subprocess.run(["go", "run", "scripts/fast_fetch.go", url, str(zip_path), str(extract_dir)], check=True)
+            result = subprocess.run(
+                ["./fast_fetch", url, str(zip_path), str(extract_dir)], 
+                check=True, capture_output=True, text=True
+            )
+            print(result.stdout)
         except subprocess.CalledProcessError as e:
             print(f"[GPU Data Agent] ❌ Go Fetcher failed: {e}")
+            print(f"[Go Output]:\n{e.stdout}\n{e.stderr}")
             return False
             
         csv_file = extract_dir / filename.replace(".zip", ".csv")
@@ -135,9 +140,14 @@ class BinanceArchiveFetcher:
         extract_dir = Path("temp_data")
         
         try:
-            subprocess.run(["go", "run", "scripts/fast_fetch.go", url, str(zip_path), str(extract_dir)], check=True)
+            result = subprocess.run(
+                ["./fast_fetch", url, str(zip_path), str(extract_dir)], 
+                check=True, capture_output=True, text=True
+            )
+            print(result.stdout)
         except subprocess.CalledProcessError as e:
             print(f"[GPU Data Agent] ❌ Go Fetcher failed: {e}")
+            print(f"[Go Output]:\n{e.stdout}\n{e.stderr}")
             return False
             
         csv_file = extract_dir / filename.replace(".zip", ".csv")
@@ -265,8 +275,13 @@ def async_data_fetch_worker(agent, model_name, zero_shot_log):
 
 def run_training_async(agent, model_name, script_path, target_acc):
     print(f"\n🚀 Launching {model_name} Training Loop...")
+    
+    env = os.environ.copy()
+    env["PYTHONPATH"] = os.getcwd()
+    
     process = subprocess.Popen(
         [sys.executable, "-m", script_path, "--target_acc", str(target_acc)],
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -311,6 +326,10 @@ def main():
     if not shutil.which("go"):
         print("🚀 Installing Golang for ultra-fast parallel fetching...")
         os.system("apt-get update && apt-get install -y golang")
+        
+    if not os.path.exists("fast_fetch"):
+        print("🚀 Compiling Go Fetcher...")
+        os.system("go build -o fast_fetch scripts/fast_fetch.go")
 
     # Ensure cudf is available or fallback
     if not USE_CUDF:
