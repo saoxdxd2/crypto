@@ -144,10 +144,21 @@ class LOBERTModel(nn.Module):
         self.refinement_norm = nn.LayerNorm(d_model)
 
         # ── Online fine-tuning state ──
-        self.device = torch.device("cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.checkpoint_dir = LOBERT_CHECKPOINT_DIR
-        self.optimizer = torch.optim.AdamW(self.parameters(), lr=LOBERT_FINETUNE_LR)
+        
+        try:
+            import bitsandbytes as bnb
+            self.optimizer = bnb.optim.AdamW8bit(self.parameters(), lr=LOBERT_FINETUNE_LR)
+            logger.info("⚡ Using 8-bit AdamW optimizer for LOBERT")
+        except ImportError:
+            self.optimizer = torch.optim.AdamW(self.parameters(), lr=LOBERT_FINETUNE_LR)
+            
         self.loss_fn = nn.BCEWithLogitsLoss()
+        
+        # AMP for FlashAttention-2
+        self.scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
+        
         self._step_count = 0
         
         # ── Experience Replay Buffer & Gradient Accumulation ──
@@ -260,19 +271,29 @@ class LOBERTModel(nn.Module):
         b_ts = torch.stack([x[1] for x in sampled]).to(self.device)
         b_targ = torch.stack([x[2] for x in sampled]).to(self.device)
 
-        # 3. Forward Pass & Loss
-        predictions = self.forward_recursive(b_msgs, b_ts, h_cycles, l_cycles)
-        
-        # Scale loss by accumulation steps
-        loss = self.loss_fn(predictions, b_targ) / self.grad_accum_steps
-        loss.backward()
+        # 3. Forward Pass & Loss with AMP (Unlocks FlashAttention-2)
+        if torch.cuda.is_available():
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                predictions = self.forward_recursive(b_msgs, b_ts, h_cycles, l_cycles)
+                loss = self.loss_fn(predictions, b_targ) / self.grad_accum_steps
+            self.scaler.scale(loss).backward()
+        else:
+            predictions = self.forward_recursive(b_msgs, b_ts, h_cycles, l_cycles)
+            loss = self.loss_fn(predictions, b_targ) / self.grad_accum_steps
+            loss.backward()
         
         self._step_count += 1
         
         # 4. Gradient Accumulation Step
         if self._step_count % self.grad_accum_steps == 0:
-            torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-            self.optimizer.step()
+            if torch.cuda.is_available():
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+                self.optimizer.step()
             self.optimizer.zero_grad()
 
         if self._step_count % 50 == 0:

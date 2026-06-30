@@ -106,13 +106,13 @@ class FinCastForecaster:
         self,
         context_len: int = 512,
         horizon: int = 3,
-        backend: str = "cpu",
+        backend: str = "cuda" if torch.cuda.is_available() else "cpu",
     ) -> None:
         self.context_len = context_len
         self.horizon = horizon
         self.device = torch.device(backend)
         
-        logger.info(f"Initializing FinCast backend={backend} context={context_len}")
+        logger.info(f"Initializing FinCast backend={self.device} context={context_len}")
         self.model = FinCastModel().to(self.device)
         self.model.eval()
         
@@ -121,10 +121,23 @@ class FinCastForecaster:
 
         # ── Online fine-tuning state ──
         self.checkpoint_dir = FINCAST_CHECKPOINT_DIR
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(), lr=FINCAST_FINETUNE_LR, weight_decay=FINCAST_WEIGHT_DECAY
-        )
+        
+        try:
+            import bitsandbytes as bnb
+            self.optimizer = bnb.optim.AdamW8bit(
+                self.model.parameters(), lr=FINCAST_FINETUNE_LR, weight_decay=FINCAST_WEIGHT_DECAY
+            )
+            logger.info("⚡ Using 8-bit AdamW optimizer for FinCast")
+        except ImportError:
+            self.optimizer = torch.optim.AdamW(
+                self.model.parameters(), lr=FINCAST_FINETUNE_LR, weight_decay=FINCAST_WEIGHT_DECAY
+            )
+            
         self.loss_fn = nn.HuberLoss()
+        
+        # AMP for FlashAttention-2
+        self.scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
+        
         self._step_count = 0
         
         # ── Experience Replay Buffer & Gradient Accumulation ──
@@ -171,20 +184,31 @@ class FinCastForecaster:
         x = torch.tensor(np.stack(b_ohlcv), dtype=torch.float32).to(self.device)
         y = torch.tensor(b_targ, dtype=torch.float32).to(self.device)
 
-        # 3. Forward Pass & Loss
-        predictions = self.model(x)  # (B, SeqLen)
-        pred_last = predictions[:, -1]  # (B,)
-        
-        # Scale loss by accumulation steps
-        loss = self.loss_fn(pred_last, y) / self.grad_accum_steps
-        loss.backward()
+        # 3. Forward Pass & Loss with AMP (Unlocks FlashAttention-2)
+        if torch.cuda.is_available():
+            with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+                predictions = self.model(x)  # (B, SeqLen)
+                pred_last = predictions[:, -1]  # (B,)
+                loss = self.loss_fn(pred_last, y) / self.grad_accum_steps
+            self.scaler.scale(loss).backward()
+        else:
+            predictions = self.model(x)  # (B, SeqLen)
+            pred_last = predictions[:, -1]  # (B,)
+            loss = self.loss_fn(pred_last, y) / self.grad_accum_steps
+            loss.backward()
 
         self._step_count += 1
 
         # 4. Gradient Accumulation Step
         if self._step_count % self.grad_accum_steps == 0:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-            self.optimizer.step()
+            if torch.cuda.is_available():
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+                self.optimizer.step()
             self.optimizer.zero_grad()
 
         if self._step_count % 50 == 0:
