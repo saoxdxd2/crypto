@@ -71,10 +71,6 @@ class BinanceArchiveFetcher:
             pl.col("timestamp_ms").cast(pl.Int64)
         ]).select(["price", "volume", "side", "order_type", "timestamp_ms"])
         
-        if output_parquet.exists():
-            existing_df = pl.read_parquet(output_parquet)
-            df = pl.concat([existing_df, df])
-            
         df = df.sort("timestamp_ms")
         df.write_parquet(output_parquet)
         
@@ -123,11 +119,8 @@ class BinanceArchiveFetcher:
             pl.lit(True).alias("is_closed")
         ]).select(["open", "high", "low", "close", "volume", "is_closed"])
         
-        if output_parquet.exists():
-            existing_df = pl.read_parquet(output_parquet)
-            df = pl.concat([existing_df, df])
-            
-        df = df.write_parquet(output_parquet)
+        df = df.sort("open_time")
+        df.write_parquet(output_parquet)
         
         # Cleanup
         zip_path.unlink()

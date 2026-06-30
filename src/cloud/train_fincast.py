@@ -26,6 +26,31 @@ logger = logging.getLogger(__name__)
 HF_TOKEN = os.environ.get("HF_TOKEN")
 REPO_ID = "sao/FinCast-crypto-v1"
 
+def apply_smart_weight_reset(model, shrink_factor=0.9, noise_std=0.01):
+    """
+    Implements Meta-inspired 'Shrink and Perturb' to prevent catastrophic forgetting
+    and loss of plasticity during continual learning. Also completely resets the 
+    last linear layer to induce transfer shock.
+    """
+    import torch.nn as nn
+    import torch
+    
+    with torch.no_grad():
+        for name, param in model.named_parameters():
+            if 'linear' in name or 'head' in name or 'classifier' in name:
+                # Reset the last layer (meta-learning effect / transfer shock)
+                if len(param.shape) >= 2:
+                    nn.init.xavier_uniform_(param)
+                else:
+                    nn.init.zeros_(param)
+            else:
+                # Shrink and Perturb for hidden representations
+                param.data.mul_(shrink_factor)
+                noise = torch.randn_like(param) * noise_std
+                param.data.add_(noise)
+    
+    logger.info("✅ Applied Smart Weight Reset (Shrink & Perturb + Last-Layer Reset) to maintain plasticity.")
+
 def train(args):
     # Set random seeds for deterministic splits and model weights
     import random
@@ -56,7 +81,23 @@ def train(args):
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
     scaler = GradScaler(enabled=args.fp16)
     
-    if args.resume_from_hub:
+    # Auto-resume to support Continuous Learning Loop
+    ckpt_loaded = False
+    local_ckpt = Path("checkpoints/fincast_checkpoint.pt")
+    
+    if local_ckpt.exists():
+        logger.info(f"Attempting to resume from local checkpoint {local_ckpt}...")
+        try:
+            checkpoint = torch.load(local_ckpt, map_location=device)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            scaler.load_state_dict(checkpoint['scaler_state_dict'])
+            logger.info(f"✅ Successfully loaded model and optimizer states from {local_ckpt}")
+            ckpt_loaded = True
+        except Exception as e:
+            logger.warning(f"Error loading local checkpoint: {e}")
+            
+    elif args.resume_from_hub:
         logger.info(f"Attempting to resume from Hugging Face Hub ({REPO_ID})...")
         try:
             from huggingface_hub import hf_hub_download
@@ -66,8 +107,13 @@ def train(args):
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             scaler.load_state_dict(checkpoint['scaler_state_dict'])
             logger.info(f"✅ Successfully loaded model and optimizer states from {ckpt_path}")
+            ckpt_loaded = True
         except Exception as e:
             logger.warning(f"No existing checkpoint found or error downloading: {e}. Starting from scratch.")
+            
+    # Apply Continuous Learning Plasticity if we are resuming an older checkpoint
+    if ckpt_loaded:
+        apply_smart_weight_reset(model)
     
     # Autoregressive return prediction (regression task)
     criterion = nn.MSELoss()
