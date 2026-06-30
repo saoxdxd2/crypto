@@ -47,19 +47,17 @@ class BinanceArchiveFetcher:
         filename = f"{symbol}-trades-{year}-{month}.zip"
         url = f"{BinanceArchiveFetcher.BASE_URL}/trades/{symbol}/{filename}"
         
-        print(f"\n[GPU Data Agent] 📥 Downloading Trades: {url}")
+        print(f"\n[GPU Data Agent] 📥 Fetching Trades via Go: {url}")
         zip_path = Path(filename)
+        extract_dir = Path("temp_data")
+        
         try:
-            urllib.request.urlretrieve(url, zip_path)
-        except Exception as e:
-            print(f"[GPU Data Agent] ❌ Failed to download {url}: {e}")
+            subprocess.run(["go", "run", "scripts/fast_fetch.go", url, str(zip_path), str(extract_dir)], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[GPU Data Agent] ❌ Go Fetcher failed: {e}")
             return False
             
-        print(f"[GPU Data Agent] ⚡ Extracting ZIP...")
-        import zipfile
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall("temp_data")
-        csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
+        csv_file = extract_dir / filename.replace(".zip", ".csv")
             
         print(f"[GPU Data Agent] ⚡ GPU-Accelerated Chunked Parsing of CSV...")
         
@@ -132,19 +130,17 @@ class BinanceArchiveFetcher:
         filename = f"{symbol}-1m-{year}-{month}.zip"
         url = f"{BinanceArchiveFetcher.BASE_URL}/klines/{symbol}/1m/{filename}"
         
-        print(f"\n[GPU Data Agent] 📥 Downloading Klines: {url}")
+        print(f"\n[GPU Data Agent] 📥 Fetching Klines via Go: {url}")
         zip_path = Path(filename)
+        extract_dir = Path("temp_data")
+        
         try:
-            urllib.request.urlretrieve(url, zip_path)
-        except Exception as e:
-            print(f"[GPU Data Agent] ❌ Failed to download {url}: {e}")
+            subprocess.run(["go", "run", "scripts/fast_fetch.go", url, str(zip_path), str(extract_dir)], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[GPU Data Agent] ❌ Go Fetcher failed: {e}")
             return False
             
-        print(f"[GPU Data Agent] ⚡ Extracting ZIP...")
-        import zipfile
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall("temp_data")
-        csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
+        csv_file = extract_dir / filename.replace(".zip", ".csv")
             
         print(f"[GPU Data Agent] ⚡ GPU-Accelerated Chunked Parsing of CSV...")
         
@@ -310,6 +306,11 @@ def main():
 
     if IN_COLAB and os.path.exists("/content/crypto"):
         os.chdir("/content/crypto")
+        
+    import shutil
+    if not shutil.which("go"):
+        print("🚀 Installing Golang for ultra-fast parallel fetching...")
+        os.system("apt-get update && apt-get install -y golang")
 
     # Ensure cudf is available or fallback
     if not USE_CUDF:
