@@ -154,25 +154,45 @@ def train(args):
         epoch_loss = 0.0
         
         for step, (ohlcv_seq, target_returns) in enumerate(loader):
-            ohlcv_seq = ohlcv_seq.to(device)
-            target_returns = target_returns.to(device)
-            
-            with autocast(enabled=args.fp16):
-                # Model returns (B, SeqLen). We take the prediction for the last token.
-                predictions = model(ohlcv_seq)
-                last_token_preds = predictions[:, -1]
-                
-                loss = criterion(last_token_preds, target_returns)
-                loss = loss / args.accumulate_steps
-            
-            scaler.scale(loss).backward()
-            
-            if (step + 1) % args.accumulate_steps == 0:
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
-                
-            epoch_loss += loss.item() * args.accumulate_steps
+            oom_retries = 0
+            while oom_retries < 3:
+                try:
+                    ohlcv_seq = ohlcv_seq.to(device)
+                    target_returns = target_returns.to(device)
+                    
+                    with autocast(enabled=args.fp16):
+                        # Model returns (B, SeqLen). We take the prediction for the last token.
+                        predictions = model(ohlcv_seq)
+                        last_token_preds = predictions[:, -1]
+                        
+                        loss = criterion(last_token_preds, target_returns)
+                        loss = loss / args.accumulate_steps
+                    
+                    scaler.scale(loss).backward()
+                    
+                    if (step + 1) % args.accumulate_steps == 0:
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad()
+                        
+                    epoch_loss += loss.item() * args.accumulate_steps
+                    break  # Success, break out of retry loop
+                    
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        oom_retries += 1
+                        logger.warning(f"⚠️ CUDA OOM! (cudf might be extracting data). Clearing cache & waiting 5s (Retry {oom_retries}/3)...")
+                        if 'predictions' in locals(): del predictions
+                        if 'last_token_preds' in locals(): del last_token_preds
+                        if 'loss' in locals(): del loss
+                        torch.cuda.empty_cache()
+                        optimizer.zero_grad()
+                        import time
+                        time.sleep(5)
+                        if oom_retries == 3:
+                            logger.error("❌ Unrecoverable OOM. Skipping this batch.")
+                    else:
+                        raise e
             
             if step % 50 == 0:
                 logger.info(f"Epoch [{epoch+1}/{args.epochs}], Step [{step}/{len(loader)}], Loss: {loss.item()*args.accumulate_steps:.6f}")

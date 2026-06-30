@@ -57,33 +57,51 @@ class BinanceArchiveFetcher:
             
         print(f"[GPU Data Agent] ⚡ GPU-Accelerated Extraction & Parsing of {filename}...")
         
-        # cudf.read_csv automatically handles 'zip' compression and extracts on the GPU
-        df = cudf.read_csv(
-            zip_path, 
-            compression='zip', 
-            header=None, 
-            names=["id", "price", "volume", "quoteQty", "timestamp_ms", "isBuyerMaker", "isBestMatch"],
-            dtype={
-                "id": "int64", "price": "float64", "volume": "float64", "quoteQty": "float64", 
-                "timestamp_ms": "int64", "isBuyerMaker": "bool", "isBestMatch": "bool"
-            }
-        )
+        fallback_used = False
+        try:
+            # cudf.read_csv automatically handles 'zip' compression and extracts on the GPU
+            df = cudf.read_csv(
+                zip_path, 
+                compression='zip', 
+                header=None, 
+                names=["id", "price", "volume", "quoteQty", "timestamp_ms", "isBuyerMaker", "isBestMatch"],
+                dtype={
+                    "id": "int64", "price": "float64", "volume": "float64", "quoteQty": "float64", 
+                    "timestamp_ms": "int64", "isBuyerMaker": "bool", "isBestMatch": "bool"
+                }
+            )
+        except Exception as e:
+            if USE_CUDF and ("memory" in str(e).lower() or "alloc" in str(e).lower() or "cuda" in str(e).lower()):
+                print(f"[GPU Data Agent] ⚠️ CUDA OOM during GPU extraction! Falling back to CPU extraction for this dataset...")
+                fallback_used = True
+                import zipfile
+                import polars as pl
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall("temp_data")
+                csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
+                df = pl.read_csv(csv_file, has_header=False, new_columns=["id", "price", "volume", "quoteQty", "timestamp_ms", "isBuyerMaker", "isBestMatch"])
+                csv_file.unlink()
+            else:
+                raise e
+        
+        is_cudf_df = USE_CUDF and not fallback_used
         
         # Convert to LOBERT schema: price, volume, side, order_type, timestamp_ms
-        if USE_CUDF:
+        if is_cudf_df:
             df['side'] = df['isBuyerMaker'].astype('float64')
             df['order_type'] = 1.0
         else:
+            import polars as pl
             # Polars fallback
             df = df.with_columns([
-                cudf.when(cudf.col("isBuyerMaker")).then(1.0).otherwise(0.0).alias("side"),
-                cudf.lit(1.0).alias("order_type")
+                pl.when(pl.col("isBuyerMaker")).then(1.0).otherwise(0.0).alias("side"),
+                pl.lit(1.0).alias("order_type")
             ])
             
         df = df[["price", "volume", "side", "order_type", "timestamp_ms"]]
-        df = df.sort_values("timestamp_ms") if USE_CUDF else df.sort("timestamp_ms")
+        df = df.sort_values("timestamp_ms") if is_cudf_df else df.sort("timestamp_ms")
         
-        df.to_parquet(output_parquet) if USE_CUDF else df.write_parquet(output_parquet)
+        df.to_parquet(output_parquet) if is_cudf_df else df.write_parquet(output_parquet)
         
         # Cleanup
         zip_path.unlink()
@@ -107,29 +125,50 @@ class BinanceArchiveFetcher:
             
         print(f"[GPU Data Agent] ⚡ GPU-Accelerated Extraction & Parsing of {filename}...")
         
-        df = cudf.read_csv(
-            zip_path, 
-            compression='zip', 
-            header=None, 
-            names=[
-                "open_time", "open", "high", "low", "close", "volume", "close_time", 
-                "quote_asset_volume", "trades", "taker_buy_base", "taker_buy_quote", "ignore"
-            ],
-            dtype={
-                "open_time": "int64", "open": "float64", "high": "float64", "low": "float64", 
-                "close": "float64", "volume": "float64", "close_time": "int64"
-            }
-        )
+        fallback_used = False
+        try:
+            df = cudf.read_csv(
+                zip_path, 
+                compression='zip', 
+                header=None, 
+                names=[
+                    "open_time", "open", "high", "low", "close", "volume", "close_time", 
+                    "quote_asset_volume", "trades", "taker_buy_base", "taker_buy_quote", "ignore"
+                ],
+                dtype={
+                    "open_time": "int64", "open": "float64", "high": "float64", "low": "float64", 
+                    "close": "float64", "volume": "float64", "close_time": "int64"
+                }
+            )
+        except Exception as e:
+            if USE_CUDF and ("memory" in str(e).lower() or "alloc" in str(e).lower() or "cuda" in str(e).lower()):
+                print(f"[GPU Data Agent] ⚠️ CUDA OOM during GPU extraction! Falling back to CPU extraction for this dataset...")
+                fallback_used = True
+                import zipfile
+                import polars as pl
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall("temp_data")
+                csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
+                df = pl.read_csv(csv_file, has_header=False, new_columns=[
+                    "open_time", "open", "high", "low", "close", "volume", "close_time", 
+                    "quote_asset_volume", "trades", "taker_buy_base", "taker_buy_quote", "ignore"
+                ])
+                csv_file.unlink()
+            else:
+                raise e
         
-        if USE_CUDF:
+        is_cudf_df = USE_CUDF and not fallback_used
+        
+        if is_cudf_df:
             df['is_closed'] = True
         else:
-            df = df.with_columns(cudf.lit(True).alias("is_closed"))
+            import polars as pl
+            df = df.with_columns(pl.lit(True).alias("is_closed"))
             
         df = df[["open_time", "open", "high", "low", "close", "volume", "is_closed"]]
-        df = df.sort_values("open_time") if USE_CUDF else df.sort("open_time")
+        df = df.sort_values("open_time") if is_cudf_df else df.sort("open_time")
         
-        df.to_parquet(output_parquet) if USE_CUDF else df.write_parquet(output_parquet)
+        df.to_parquet(output_parquet) if is_cudf_df else df.write_parquet(output_parquet)
         
         # Cleanup
         zip_path.unlink()
