@@ -124,14 +124,52 @@ class BinanceArchiveFetcher:
         return True
 
 
+def train_lobert_worker(model, loader, max_steps=5000):
+    import time
+    print("\n[LOBERT-Thread] 🔥 Starting Continuous Fine-Tuning Steps...")
+    step = 0
+    while step < max_steps:
+        for messages, timestamps, targets in loader:
+            if step >= max_steps: break
+            loss = model.finetune_step(messages, timestamps, targets)
+            if step % 20 == 0:
+                print(f"[LOBERT-Thread] Step {step:04d} | Loss: {loss:.4f}")
+            step += 1
+            time.sleep(0.01) # Small yield for the GIL
+    print(f"\n[LOBERT-Thread] 🎉 Reached target steps!")
+
+def train_fincast_worker(model, loader, max_steps=5000):
+    import time
+    print("\n[FinCast-Thread] 🔥 Starting Continuous Fine-Tuning Steps...")
+    step = 0
+    while step < max_steps:
+        for x, y in loader:
+            if step >= max_steps: break
+            # FinCast finetune_step expects lists of numpy arrays
+            ohlcv_windows = [win.numpy() for win in x]
+            target_returns = [t.item() for t in y]
+            loss = model.finetune_step(ohlcv_windows, target_returns)
+            if step % 20 == 0:
+                print(f"[FinCast-Thread] Step {step:04d} | Loss: {loss:.4f}")
+            step += 1
+            time.sleep(0.01) # Small yield for the GIL
+    print(f"\n[FinCast-Thread] 🎉 Reached target steps!")
+
 def run_online_adaptation_loop():
-    print("\n🚀 Initializing Online CPU Adaptation Loop...")
+    print("\n🚀 Initializing Concurrent CPU Adaptation Loop...")
     import torch
     import numpy as np
     from src.core.lob_encoder import LOBERTModel
     from src.mission_control.forecast import FinCastForecaster
     from src.data.data_loaders import LOBERTDataset, FinCastDataset
     from torch.utils.data import DataLoader
+    
+    # ── CPU Thread Partitioning ──
+    # PyTorch defaults to using all physical cores for math. We partition 
+    # the threads so LOBERT and FinCast don't thrash each other context switching.
+    num_cores = os.cpu_count() or 4
+    torch.set_num_threads(max(1, num_cores // 2))
+    print(f"⚙️ Hardware Optimization: Allocated {torch.get_num_threads()} CPU math threads per model.")
 
     # Initialize CPU models
     lobert = LOBERTModel()
@@ -145,36 +183,26 @@ def run_online_adaptation_loop():
         print("❌ Data not found! Fetching data first...")
         return False
 
-    print("\n📦 Loading Datasets...")
+    print("\n📦 Spawning PyTorch DataLoaders with parallel background workers...")
     lob_dataset = LOBERTDataset(str(lob_path), seq_len=128)
     fincast_dataset = FinCastDataset(str(ohlcv_path), seq_len=512)
 
-    lob_loader = DataLoader(lob_dataset, batch_size=32, shuffle=True)
-    fincast_loader = DataLoader(fincast_dataset, batch_size=32, shuffle=True)
+    # num_workers > 0 offloads parquet reading and tensor creation from the main GIL thread
+    lob_loader = DataLoader(lob_dataset, batch_size=32, shuffle=True, num_workers=2, pin_memory=True)
+    fincast_loader = DataLoader(fincast_dataset, batch_size=32, shuffle=True, num_workers=2, pin_memory=True)
 
-    print("\n🔥 Starting Continuous Fine-Tuning Steps...")
+    print("\n🚀 Launching Concurrent Execution Threads...")
     
-    # Run 50 steps for demonstration
-    lobert_loss = 0
-    for i, (messages, timestamps, targets) in enumerate(lob_loader):
-        if i >= 50: break
-        loss = lobert.finetune_step(messages, timestamps, targets)
-        lobert_loss = loss
-        if i % 10 == 0:
-            print(f"[LOBERT] Step {i:03d} | Loss: {loss:.4f}")
+    t_lobert = threading.Thread(target=train_lobert_worker, args=(lobert, lob_loader, 10000))
+    t_fincast = threading.Thread(target=train_fincast_worker, args=(fincast, fincast_loader, 10000))
+    
+    t_lobert.start()
+    t_fincast.start()
+    
+    t_lobert.join()
+    t_fincast.join()
 
-    fincast_loss = 0
-    for i, (x, y) in enumerate(fincast_loader):
-        if i >= 50: break
-        # FinCast finetune_step expects lists of numpy arrays
-        ohlcv_windows = [win.numpy() for win in x]
-        target_returns = [t.item() for t in y]
-        loss = fincast.finetune_step(ohlcv_windows, target_returns)
-        fincast_loss = loss
-        if i % 10 == 0:
-            print(f"[FinCast] Step {i:03d} | Loss: {loss:.4f}")
-
-    print(f"\n🎉 Adaptation complete! LOBERT Loss: {lobert_loss:.4f} | FinCast Loss: {fincast_loss:.4f}")
+    print(f"\n🎉 Concurrent Adaptation Harness gracefully exited!")
     return True
 
 def main():
