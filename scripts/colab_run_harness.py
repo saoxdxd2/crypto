@@ -25,12 +25,7 @@ except ImportError:
     IN_COLAB = False
 
 def get_api_key():
-    if IN_COLAB:
-        try:
-            return userdata.get('GEMINI_API_KEY')
-        except:
-            return os.environ.get("GEMINI_API_KEY")
-    return os.environ.get("GEMINI_API_KEY")
+    return "AQ.Ab8RN6Ifh1nrh3KyuJkTuKUC_FW6rvMipV1Bg6nieB_lDX1h-w"
 
 
 class BinanceArchiveFetcher:
