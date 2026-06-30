@@ -324,11 +324,28 @@ def main():
         os.chdir(repo_root)
     except NameError:
         # Interactive IPython/Colab cell execution
-        if os.path.exists("/content/crypto/crypto/src/cloud/train_lobert.py"):
-            os.chdir("/content/crypto/crypto")
-        elif os.path.exists("/content/crypto/src/cloud/train_lobert.py"):
-            os.chdir("/content/crypto")
-        elif not os.path.exists("src/cloud/train_lobert.py"):
+        found = False
+        if os.path.exists("src/cloud/train_lobert.py"):
+            found = True
+        else:
+            import glob
+            # Search up to 4 levels deep in /content (handles Drive mounts too)
+            patterns = [
+                "/content/*/src/cloud/train_lobert.py", 
+                "/content/*/*/src/cloud/train_lobert.py",
+                "/content/*/*/*/src/cloud/train_lobert.py",
+                "/content/*/*/*/*/src/cloud/train_lobert.py"
+            ]
+            for pattern in patterns:
+                matches = glob.glob(pattern)
+                if matches:
+                    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(matches[0])))
+                    os.chdir(repo_root)
+                    print(f"✅ Auto-detected repository root at: {repo_root}")
+                    found = True
+                    break
+                    
+        if not found:
             print("❌ Cannot find 'src' directory! Make sure you are running this cell after 'git clone https://github.com/saoxdxd2/crypto.git'")
             import sys
             sys.exit(1)
