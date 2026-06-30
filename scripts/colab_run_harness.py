@@ -319,17 +319,19 @@ def main():
     print("🤖 High-Efficiency Concurrent Loop Engineering Harness")
     print("="*60)
 
-    if IN_COLAB and os.path.exists("/content/crypto"):
-        os.chdir("/content/crypto")
-        
+    repo_root = Path(__file__).resolve().parent.parent
+    os.chdir(repo_root)
+    
     import shutil
     if not shutil.which("go"):
         print("🚀 Installing Golang for ultra-fast parallel fetching...")
         os.system("apt-get update && apt-get install -y golang")
         
-    if not os.path.exists("fast_fetch"):
+    if not os.path.exists("fast_fetch") and not os.path.exists("fast_fetch.exe"):
         print("🚀 Compiling Go Fetcher...")
-        os.system("go build -o fast_fetch scripts/fast_fetch.go")
+        if os.system("go build -o fast_fetch scripts/fast_fetch.go") != 0:
+            print("❌ Failed to compile Go Fetcher! Make sure Golang is installed correctly.")
+            sys.exit(1)
 
     # Ensure cudf is available or fallback
     if not USE_CUDF:
