@@ -61,47 +61,62 @@ class BinanceArchiveFetcher:
             zip_ref.extractall("temp_data")
         csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
             
-        print(f"[GPU Data Agent] ⚡ GPU-Accelerated Parsing of CSV...")
+        print(f"[GPU Data Agent] ⚡ GPU-Accelerated Chunked Parsing of CSV...")
         
         fallback_used = False
         try:
-            # cudf.read_csv is safer when reading uncompressed CSVs to avoid C++ ZIP decompression segfaults
-            df = cudf.read_csv(
-                csv_file, 
-                header=None, 
-                names=["id", "price", "volume", "quoteQty", "timestamp_ms", "isBuyerMaker", "isBestMatch"],
-                dtype={
-                    "id": "int64", "price": "float64", "volume": "float64", "quoteQty": "float64", 
-                    "timestamp_ms": "int64", "isBuyerMaker": "bool", "isBestMatch": "bool"
-                }
-            )
+            import os
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+            
+            file_size = os.path.getsize(csv_file)
+            chunk_size_bytes = 250 * 1024 * 1024  # 250 MB chunks
+            offset = 0
+            writer = None
+            
+            while offset < file_size:
+                df = cudf.read_csv(
+                    csv_file, 
+                    byte_range=(offset, chunk_size_bytes),
+                    header=None, 
+                    names=["id", "price", "volume", "quoteQty", "timestamp_ms", "isBuyerMaker", "isBestMatch"],
+                    dtype={
+                        "id": "int64", "price": "float64", "volume": "float64", "quoteQty": "float64", 
+                        "timestamp_ms": "int64", "isBuyerMaker": "bool", "isBestMatch": "bool"
+                    }
+                )
+                
+                if len(df) > 0:
+                    df['side'] = df['isBuyerMaker'].astype('float64')
+                    df['order_type'] = 1.0
+                    df = df[["price", "volume", "side", "order_type", "timestamp_ms"]]
+                    df = df.sort_values("timestamp_ms")
+                    
+                    table = df.to_arrow()
+                    if writer is None:
+                        writer = pq.ParquetWriter(output_parquet, table.schema)
+                    writer.write_table(table)
+                    
+                offset += chunk_size_bytes
+                
+            if writer:
+                writer.close()
+                
         except Exception as e:
-            if USE_CUDF and ("memory" in str(e).lower() or "alloc" in str(e).lower() or "cuda" in str(e).lower()):
-                print(f"[GPU Data Agent] ⚠️ CUDA OOM during GPU extraction! Falling back to CPU extraction for this dataset...")
+            if USE_CUDF and ("memory" in str(e).lower() or "alloc" in str(e).lower() or "cuda" in str(e).lower() or "cufile" in str(e).lower()):
+                print(f"[GPU Data Agent] ⚠️ CUDA OOM during GPU extraction! Falling back to CPU Streaming for this dataset...")
                 fallback_used = True
                 import polars as pl
-                df = pl.read_csv(csv_file, has_header=False, new_columns=["id", "price", "volume", "quoteQty", "timestamp_ms", "isBuyerMaker", "isBestMatch"])
+                
+                lf = pl.scan_csv(csv_file, has_header=False, new_columns=["id", "price", "volume", "quoteQty", "timestamp_ms", "isBuyerMaker", "isBestMatch"])
+                lf = lf.with_columns([
+                    pl.when(pl.col("isBuyerMaker")).then(1.0).otherwise(0.0).alias("side"),
+                    pl.lit(1.0).alias("order_type")
+                ])
+                lf = lf.select(["price", "volume", "side", "order_type", "timestamp_ms"])
+                lf.sink_parquet(output_parquet)
             else:
                 raise e
-        
-        is_cudf_df = USE_CUDF and not fallback_used
-        
-        # Convert to LOBERT schema: price, volume, side, order_type, timestamp_ms
-        if is_cudf_df:
-            df['side'] = df['isBuyerMaker'].astype('float64')
-            df['order_type'] = 1.0
-        else:
-            import polars as pl
-            # Polars fallback
-            df = df.with_columns([
-                pl.when(pl.col("isBuyerMaker")).then(1.0).otherwise(0.0).alias("side"),
-                pl.lit(1.0).alias("order_type")
-            ])
-            
-        df = df[["price", "volume", "side", "order_type", "timestamp_ms"]]
-        df = df.sort_values("timestamp_ms") if is_cudf_df else df.sort("timestamp_ms")
-        
-        df.to_parquet(output_parquet) if is_cudf_df else df.write_parquet(output_parquet)
         
         # Cleanup
         if 'csv_file' in locals() and csv_file.exists():
@@ -131,46 +146,63 @@ class BinanceArchiveFetcher:
             zip_ref.extractall("temp_data")
         csv_file = Path("temp_data") / filename.replace(".zip", ".csv")
             
-        print(f"[GPU Data Agent] ⚡ GPU-Accelerated Parsing of CSV...")
+        print(f"[GPU Data Agent] ⚡ GPU-Accelerated Chunked Parsing of CSV...")
         
         fallback_used = False
         try:
-            df = cudf.read_csv(
-                csv_file, 
-                header=None, 
-                names=[
-                    "open_time", "open", "high", "low", "close", "volume", "close_time", 
-                    "quote_asset_volume", "trades", "taker_buy_base", "taker_buy_quote", "ignore"
-                ],
-                dtype={
-                    "open_time": "int64", "open": "float64", "high": "float64", "low": "float64", 
-                    "close": "float64", "volume": "float64", "close_time": "int64"
-                }
-            )
+            import os
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+            
+            file_size = os.path.getsize(csv_file)
+            chunk_size_bytes = 250 * 1024 * 1024
+            offset = 0
+            writer = None
+            
+            while offset < file_size:
+                df = cudf.read_csv(
+                    csv_file, 
+                    byte_range=(offset, chunk_size_bytes),
+                    header=None, 
+                    names=[
+                        "open_time", "open", "high", "low", "close", "volume", "close_time", 
+                        "quote_asset_volume", "trades", "taker_buy_base", "taker_buy_quote", "ignore"
+                    ],
+                    dtype={
+                        "open_time": "int64", "open": "float64", "high": "float64", "low": "float64", 
+                        "close": "float64", "volume": "float64", "close_time": "int64"
+                    }
+                )
+                
+                if len(df) > 0:
+                    df['is_closed'] = True
+                    df = df[["open_time", "open", "high", "low", "close", "volume", "is_closed"]]
+                    df = df.sort_values("open_time")
+                    
+                    table = df.to_arrow()
+                    if writer is None:
+                        writer = pq.ParquetWriter(output_parquet, table.schema)
+                    writer.write_table(table)
+                    
+                offset += chunk_size_bytes
+                
+            if writer:
+                writer.close()
+                
         except Exception as e:
-            if USE_CUDF and ("memory" in str(e).lower() or "alloc" in str(e).lower() or "cuda" in str(e).lower()):
-                print(f"[GPU Data Agent] ⚠️ CUDA OOM during GPU extraction! Falling back to CPU extraction for this dataset...")
+            if USE_CUDF and ("memory" in str(e).lower() or "alloc" in str(e).lower() or "cuda" in str(e).lower() or "cufile" in str(e).lower()):
+                print(f"[GPU Data Agent] ⚠️ CUDA OOM during GPU extraction! Falling back to CPU Streaming for this dataset...")
                 fallback_used = True
                 import polars as pl
-                df = pl.read_csv(csv_file, has_header=False, new_columns=[
+                lf = pl.scan_csv(csv_file, has_header=False, new_columns=[
                     "open_time", "open", "high", "low", "close", "volume", "close_time", 
                     "quote_asset_volume", "trades", "taker_buy_base", "taker_buy_quote", "ignore"
                 ])
+                lf = lf.with_columns(pl.lit(True).alias("is_closed"))
+                lf = lf.select(["open_time", "open", "high", "low", "close", "volume", "is_closed"])
+                lf.sink_parquet(output_parquet)
             else:
                 raise e
-        
-        is_cudf_df = USE_CUDF and not fallback_used
-        
-        if is_cudf_df:
-            df['is_closed'] = True
-        else:
-            import polars as pl
-            df = df.with_columns(pl.lit(True).alias("is_closed"))
-            
-        df = df[["open_time", "open", "high", "low", "close", "volume", "is_closed"]]
-        df = df.sort_values("open_time") if is_cudf_df else df.sort("open_time")
-        
-        df.to_parquet(output_parquet) if is_cudf_df else df.write_parquet(output_parquet)
         
         # Cleanup
         if 'csv_file' in locals() and csv_file.exists():
