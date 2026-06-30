@@ -44,11 +44,10 @@ class BinanceArchiveFetcher:
                 print(f"[Data Agent] ❌ aria2c download failed!")
                 return False
                 
-            print(f"[Data Agent] ⚡ Extracting...")
-            unzip_cmd = f"unzip -q -o {extract_dir}/{filename} -d {extract_dir}"
-            if os.system(unzip_cmd) != 0:
-                print(f"[Data Agent] ❌ unzip failed!")
-                return False
+            print(f"[Data Agent] ⚡ Extracting natively via Python zipfile...")
+            import zipfile
+            with zipfile.ZipFile(extract_dir / filename, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
                 
         except Exception as e:
             print(f"[Data Agent] ❌ Download/Extraction failed: {e}")
@@ -93,9 +92,10 @@ class BinanceArchiveFetcher:
             if os.system(dl_cmd) != 0:
                 return False
                 
-            unzip_cmd = f"unzip -q -o {extract_dir}/{filename} -d {extract_dir}"
-            if os.system(unzip_cmd) != 0:
-                return False
+            print(f"[Data Agent] ⚡ Extracting natively via Python zipfile...")
+            import zipfile
+            with zipfile.ZipFile(extract_dir / filename, 'r') as zip_ref:
+                zip_ref.extractall(extract_dir)
                 
         except Exception as e:
             return False
@@ -218,8 +218,8 @@ def main():
     
     import shutil
     if IN_COLAB and not shutil.which("aria2c"):
-        print("🚀 Installing aria2 and unzip for ultra-fast parallel fetching...")
-        os.system("apt-get update && apt-get install -y aria2 unzip")
+        print("🚀 Installing aria2 for ultra-fast parallel fetching...")
+        os.system("apt-get update && apt-get install -y aria2")
 
     Path("data").mkdir(exist_ok=True)
     Path("checkpoints").mkdir(exist_ok=True)
