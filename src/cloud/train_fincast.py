@@ -14,7 +14,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from huggingface_hub import HfApi
 
 from src.mission_control.forecast import FinCastModel
@@ -59,8 +59,9 @@ def train(args):
     np.random.seed(42)
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision('high')
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Starting FinCast Pre-Training on device: {device}")
@@ -73,13 +74,17 @@ def train(args):
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
     
-    loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+    loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True, prefetch_factor=2)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True, prefetch_factor=2)
     
     # 2. Initialize Model, Optimizer, and Scaler
     model = FinCastModel().to(device)
+    if hasattr(torch, "compile"):
+        logger.info("⚡ Compiling model with Torch 2.0...")
+        model = torch.compile(model)
+        
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
-    scaler = GradScaler(enabled=args.fp16)
+    scaler = GradScaler('cuda', enabled=args.fp16)
     
     # Auto-resume to support Continuous Learning Loop
     ckpt_loaded = False
@@ -130,10 +135,10 @@ def train(args):
     
     with torch.no_grad():
         for ohlcv_seq, target_returns in val_loader:
-            ohlcv_seq = ohlcv_seq.to(device)
-            target_returns = target_returns.to(device)
+            ohlcv_seq = ohlcv_seq.to(device, non_blocking=True)
+            target_returns = target_returns.to(device, non_blocking=True)
             
-            with autocast(enabled=args.fp16):
+            with autocast('cuda', enabled=args.fp16):
                 predictions = model(ohlcv_seq)
                 last_token_preds = predictions[:, -1]
                 loss = criterion(last_token_preds, target_returns)
@@ -157,10 +162,10 @@ def train(args):
             oom_retries = 0
             while oom_retries < 3:
                 try:
-                    ohlcv_seq = ohlcv_seq.to(device)
-                    target_returns = target_returns.to(device)
+                    ohlcv_seq = ohlcv_seq.to(device, non_blocking=True)
+                    target_returns = target_returns.to(device, non_blocking=True)
                     
-                    with autocast(enabled=args.fp16):
+                    with autocast('cuda', enabled=args.fp16):
                         # Model returns (B, SeqLen). We take the prediction for the last token.
                         predictions = model(ohlcv_seq)
                         last_token_preds = predictions[:, -1]
@@ -231,10 +236,10 @@ def train(args):
         
         with torch.no_grad():
             for ohlcv_seq, target_returns in val_loader:
-                ohlcv_seq = ohlcv_seq.to(device)
-                target_returns = target_returns.to(device)
+                ohlcv_seq = ohlcv_seq.to(device, non_blocking=True)
+                target_returns = target_returns.to(device, non_blocking=True)
                 
-                with autocast(enabled=args.fp16):
+                with autocast('cuda', enabled=args.fp16):
                     predictions = model(ohlcv_seq)
                     last_token_preds = predictions[:, -1]
                     loss = criterion(last_token_preds, target_returns)

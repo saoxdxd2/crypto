@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from huggingface_hub import HfApi
 
 from src.cloud.lob_encoder import LOBERTModel
@@ -58,8 +58,9 @@ def train(args):
     np.random.seed(42)
     torch.manual_seed(42)
     torch.cuda.manual_seed_all(42)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
+    torch.set_float32_matmul_precision('high')
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Starting LOBERT Pre-Training on device: {device}")
@@ -72,13 +73,17 @@ def train(args):
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
     
-    loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
+    loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True, prefetch_factor=2)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True, prefetch_factor=2)
     
     # 2. Initialize Model, Optimizer, and Scaler
     model = LOBERTModel().to(device)
+    if hasattr(torch, "compile"):
+        logger.info("⚡ Compiling model with Torch 2.0...")
+        model = torch.compile(model)
+        
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
-    scaler = GradScaler(enabled=args.fp16)
+    scaler = GradScaler('cuda', enabled=args.fp16)
     
     # Auto-resume to support Continuous Learning Loop
     ckpt_loaded = False
@@ -129,11 +134,11 @@ def train(args):
     
     with torch.no_grad():
         for messages, timestamps, targets in val_loader:
-            messages = messages.to(device)
-            timestamps = timestamps.to(device)
-            targets = targets.to(device)
+            messages = messages.to(device, non_blocking=True)
+            timestamps = timestamps.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
             
-            with autocast(enabled=args.fp16):
+            with autocast('cuda', enabled=args.fp16):
                 outputs = model.forward_recursive(messages, timestamps)
                 loss = criterion(outputs, targets)
             val_loss += loss.item()
@@ -156,11 +161,11 @@ def train(args):
             oom_retries = 0
             while oom_retries < 3:
                 try:
-                    messages = messages.to(device)
-                    timestamps = timestamps.to(device)
-                    targets = targets.to(device)
+                    messages = messages.to(device, non_blocking=True)
+                    timestamps = timestamps.to(device, non_blocking=True)
+                    targets = targets.to(device, non_blocking=True)
                     
-                    with autocast(enabled=args.fp16):
+                    with autocast('cuda', enabled=args.fp16):
                         outputs = model(messages, timestamps)
                         loss = criterion(outputs, targets)
                         loss = loss / args.accumulate_steps
@@ -228,11 +233,11 @@ def train(args):
         
         with torch.no_grad():
             for messages, timestamps, targets in val_loader:
-                messages = messages.to(device)
-                timestamps = timestamps.to(device)
-                targets = targets.to(device)
+                messages = messages.to(device, non_blocking=True)
+                timestamps = timestamps.to(device, non_blocking=True)
+                targets = targets.to(device, non_blocking=True)
                 
-                with autocast(enabled=args.fp16):
+                with autocast('cuda', enabled=args.fp16):
                     outputs = model.forward_recursive(messages, timestamps)
                     loss = criterion(outputs, targets)
                 val_loss += loss.item()
