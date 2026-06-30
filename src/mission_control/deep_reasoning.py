@@ -1,13 +1,18 @@
 """
-Deep Reasoning Specialist (GGUF LLM)
+Deep Reasoning Specialist (Gemini Primary / Local GGUF Fallback)
 
-Uses a 500M parameter Language Model quantized to 4-bit (GGUF format)
-running via llama.cpp. This model is used strictly for INFERENCE
-(overseeing the strategy and determining market regime) and is NOT
-fine-tuned online, allowing it to run fast on CPU without stalling the pipeline.
+Uses Gemini 3.1 Flash-Lite as the primary reasoning engine via the Google GenAI API.
+Falls back to a local 0.6B parameter Language Model quantized to 4-bit (GGUF format)
+running via llama.cpp when the Gemini API is unavailable or fails.
 
-Model used: Qwen2.5-0.5B-Instruct-Q4_K_M
+The local model is used strictly for INFERENCE (overseeing the strategy and
+determining market regime) and is NOT fine-tuned online, allowing it to run
+fast on CPU without stalling the pipeline.
+
+Primary Model: Gemini 3.1 Flash-Lite (cloud)
+Fallback Model: Qwen3-0.6B-Instruct-Q4_K_M (local GGUF via llama.cpp)
 """
+import os
 import logging
 import json
 from pathlib import Path
@@ -34,6 +39,33 @@ class DeepReasoningSpecialist:
         # We no longer load the model directly into RAM here.
         # Instead, we communicate with llm_server.py
         
+        # Load .env file for API keys (manual parsing, no python-dotenv)
+        env_path = Path('.env')
+        if env_path.exists():
+            for line in env_path.read_text().splitlines():
+                if '=' in line and not line.startswith('#'):
+                    k, v = line.split('=', 1)
+                    os.environ.setdefault(k.strip(), v.strip().strip('"'))
+
+    def _call_gemini(self, prompt: str, max_tokens: int = 150, temperature: float = 0.3) -> str:
+        """Call the Gemini 3.1 Flash-Lite API as the primary reasoning engine."""
+        from google import genai
+        
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not set in environment")
+        
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=prompt,
+            config={
+                "max_output_tokens": max_tokens,
+                "temperature": temperature,
+            },
+        )
+        return response.text
+
     def _call_llm_server(self, prompt: str, max_tokens: int = 150, temperature: float = 0.3) -> str:
         """Helper to call the shared LLM server API."""
         import urllib.request
@@ -46,6 +78,18 @@ class DeepReasoningSpecialist:
         except Exception as e:
             logger.error(f"Failed to call LLM server: {e}")
             raise
+
+    def _call_llm(self, prompt: str, max_tokens: int = 150, temperature: float = 0.3) -> str:
+        """Smart router: tries Gemini first, falls back to local GGUF model."""
+        try:
+            result = self._call_gemini(prompt, max_tokens, temperature)
+            logger.info("LLM routing: Gemini 2.5 Flash responded successfully.")
+            return result
+        except Exception as e:
+            logger.warning(f"LLM routing: Gemini failed ({e}), falling back to local Qwen GGUF model.")
+            result = self._call_llm_server(prompt, max_tokens, temperature)
+            logger.info("LLM routing: Local Qwen GGUF model responded successfully.")
+            return result
 
     def _evaluate_decision(self, context: str, generator_output: str) -> tuple[bool, str]:
         """
@@ -74,7 +118,7 @@ Output exactly in this JSON format:
 <|im_start|>assistant
 """
         try:
-            text = self._call_llm_server(evaluator_prompt, max_tokens=150, temperature=0.1)
+            text = self._call_llm(evaluator_prompt, max_tokens=150, temperature=0.1)
             
             if text.startswith("```json"):
                 text = text.replace("```json", "").replace("```", "").strip()
@@ -139,7 +183,7 @@ Output exactly in this JSON format:
             prompt = base_prompt + feedback_history + "<|im_start|>assistant\n"
             
             try:
-                text = self._call_llm_server(prompt, max_tokens=150, temperature=0.3)
+                text = self._call_llm(prompt, max_tokens=150, temperature=0.3)
                 
                 if text.startswith("```json"):
                     text = text.replace("```json", "").replace("```", "").strip()

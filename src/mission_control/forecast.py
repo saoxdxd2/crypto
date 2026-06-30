@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import polars as pl
 import torch
 import torch.nn as nn
@@ -27,6 +28,11 @@ logger = logging.getLogger(__name__)
 D_MODEL = 256
 NUM_HEADS = 8
 NUM_LAYERS = 6
+
+FINCAST_CHECKPOINT_DIR = Path("checkpoints")
+FINCAST_CHECKPOINT_NAME = "fincast_online.pt"
+FINCAST_FINETUNE_LR = 1e-4
+FINCAST_WEIGHT_DECAY = 0.01
 
 
 class OHLCVTokenizer(nn.Module):
@@ -112,6 +118,78 @@ class FinCastForecaster:
         
         # Load pre-trained weights if available, otherwise initialized randomly
         # self.model.load_state_dict(torch.load("fincast_weights.pt"))
+
+        # ── Online fine-tuning state ──
+        self.checkpoint_dir = FINCAST_CHECKPOINT_DIR
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(), lr=FINCAST_FINETUNE_LR, weight_decay=FINCAST_WEIGHT_DECAY
+        )
+        self.loss_fn = nn.MSELoss()
+        self._step_count = 0
+
+        self._load_checkpoint()
+
+    def finetune_step(
+        self,
+        ohlcv_windows: list[np.ndarray],
+        target_returns: list[float],
+    ) -> float:
+        """
+        Run one online adaptation step (forward + backward + optimizer step).
+
+        Args:
+            ohlcv_windows: List of numpy arrays, each shape (SeqLen, 5) — OHLCV candles
+            target_returns: List of floats — ground-truth next-candle returns
+
+        Returns:
+            Training loss (float)
+        """
+        if not ohlcv_windows:
+            return 0.0
+
+        self.model.train()
+
+        # Stack numpy arrays into a single tensor: (B, SeqLen, 5)
+        x = torch.tensor(np.stack(ohlcv_windows), dtype=torch.float32).to(self.device)
+        y = torch.tensor(target_returns, dtype=torch.float32).to(self.device)
+
+        # Forward: use the last timestep's prediction as the forecast
+        predictions = self.model(x)  # (B, SeqLen)
+        pred_last = predictions[:, -1]  # (B,)
+        loss = self.loss_fn(pred_last, y)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+        self.optimizer.step()
+
+        self._step_count += 1
+
+        if self._step_count % 50 == 0:
+            self._save_checkpoint()
+            logger.info(f"FinCast fine-tune step {self._step_count}, loss={loss.item():.6f}")
+
+        return loss.item()
+
+    def _save_checkpoint(self) -> None:
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            "model": self.model.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "step": self._step_count,
+        }, self.checkpoint_dir / FINCAST_CHECKPOINT_NAME)
+
+    def _load_checkpoint(self) -> None:
+        ckpt = self.checkpoint_dir / FINCAST_CHECKPOINT_NAME
+        if ckpt.exists():
+            try:
+                data = torch.load(ckpt, map_location=self.device, weights_only=True)
+                self.model.load_state_dict(data["model"])
+                self.optimizer.load_state_dict(data["optimizer"])
+                self._step_count = data.get("step", 0)
+                logger.info(f"Loaded FinCast checkpoint (step {self._step_count})")
+            except Exception as e:
+                logger.warning(f"Failed to load FinCast checkpoint: {e}")
 
     def forecast_latest(
         self,

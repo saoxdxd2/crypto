@@ -9,18 +9,30 @@ Key Innovations:
 1. One-Token-Per-Message (OTPM) Tokenizer using Piecewise Linear-Geometric Scaling (PLGS).
 2. Continuous-time Rotary Position Embeddings (ROPE) for irregular tick intervals.
 3. Masked Message Modeling (MMM) for pre-training.
+4. Tiny Recursive Model (TRM) refinement — ARC-AGI style iterative latent
+   scratchpad that loops over the data N times, refining the pattern score
+   at each pass. Runs efficiently on CPU (~7M total params).
 """
 from __future__ import annotations
 
+import logging
 import math
+from pathlib import Path
+
 import torch
 import torch.nn as nn
+
+logger = logging.getLogger(__name__)
 
 # ── Constants ──
 D_MODEL = 128
 NUM_HEADS = 8
 NUM_LAYERS = 4
 MAX_SEQ_LEN = 1024
+
+LOBERT_CHECKPOINT_DIR = Path("data/pattern_model")
+LOBERT_CHECKPOINT_NAME = "lobert_online.pt"
+LOBERT_FINETUNE_LR = 1e-4
 
 
 class PLGSTokenizer(nn.Module):
@@ -88,15 +100,17 @@ class ContinuousTimeROPE(nn.Module):
         
         return (x * cos) + (rotated_x * sin)
 
-
 class LOBERTModel(nn.Module):
     """
     The LOBERT Encoder network.
     Takes limit order book messages with actual timestamps and produces
     rich contextual representations of the market microstructure.
     """
-    def __init__(self, d_model: int = D_MODEL, num_heads: int = NUM_HEADS, num_layers: int = NUM_LAYERS):
+    def __init__(self, d_model: int = D_MODEL, num_heads: int = NUM_HEADS, num_layers: int = NUM_LAYERS, h_cycles: int = 2, l_cycles: int = 3):
         super().__init__()
+        self.d_model = d_model
+        self.h_cycles = h_cycles
+        self.l_cycles = l_cycles
         self.tokenizer = PLGSTokenizer()
         self.rope = ContinuousTimeROPE(d_model)
         
@@ -117,8 +131,30 @@ class LOBERTModel(nn.Module):
             nn.Sigmoid()
         )
 
+        # ── TRM: Recursive Refinement Head ──
+        # Latent scratchpad z: a learned embedding that persists across iterations.
+        # The refinement gate fuses the encoder output with the previous answer
+        # to let the model "think again" about the same data.
+        self.latent_z = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.refinement_gate = nn.Sequential(
+            nn.Linear(d_model + 1, d_model),  # concat(encoder_pooled, prev_score)
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.refinement_norm = nn.LayerNorm(d_model)
+
+        # ── Online fine-tuning state ──
+        self.device = torch.device("cpu")
+        self.checkpoint_dir = LOBERT_CHECKPOINT_DIR
+        self.optimizer = torch.optim.AdamW(self.parameters(), lr=LOBERT_FINETUNE_LR)
+        self.loss_fn = nn.MSELoss()
+        self._step_count = 0
+
+        self._load_checkpoint()
+
     def forward(self, messages: torch.Tensor, timestamps: torch.Tensor) -> torch.Tensor:
         """
+        Single-pass forward (backward compatible).
         messages: (B, SeqLen, Features)
         timestamps: (B, SeqLen) in milliseconds
         Returns: Pattern score [0, 1]
@@ -137,4 +173,101 @@ class LOBERTModel(nn.Module):
         
         # 5. Task Head
         return self.task_head(x_pooled).squeeze(-1)  # (B,)
+
+    def forward_recursive(
+        self,
+        messages: torch.Tensor,
+        timestamps: torch.Tensor,
+        h_cycles: int | None = None,
+        l_cycles: int | None = None,
+    ) -> torch.Tensor:
+        """
+        TRM Recursive Refinement Forward Pass (ARC-AGI style).
+
+        Loops over the data using outer loops (H_cycles) and inner loops (L_cycles).
+        H_cycles: manages the high-level reasoning passes.
+        L_cycles: manages the low-level latent state refinement passes.
+        """
+        B = messages.size(0)
+        h_cycles = h_cycles if h_cycles is not None else self.h_cycles
+        l_cycles = l_cycles if l_cycles is not None else self.l_cycles
+
+        # 1. Encode the raw LOB data (shared across all iterations)
+        x = self.tokenizer(messages)
+        x = self.rope(x, timestamps)
+        x = self.encoder(x)          # (B, S, D)
+        x_pooled = x.mean(dim=1)     # (B, D)
+
+        # 2. Initial score from the base task head
+        score = self.task_head(x_pooled).squeeze(-1)  # (B,)
+
+        # 3. Expand the latent scratchpad to batch size
+        z = self.latent_z.expand(B, -1, -1).squeeze(1)  # (B, D)
+
+        # 4. Recursive refinement loops (H_cycles and L_cycles)
+        for h in range(h_cycles):
+            for l in range(l_cycles):
+                # Inner loop: update scratchpad z
+                score_expanded = score.unsqueeze(-1)  # (B, 1)
+                gate_input = torch.cat([z, score_expanded], dim=-1)  # (B, D+1)
+                z_update = self.refinement_gate(gate_input)  # (B, D)
+                z = self.refinement_norm(z + z_update)  # residual + LayerNorm
+            
+            # Outer loop step: Update score based on final refined z of this high cycle
+            blended = x_pooled + z  # residual connection to raw encoder
+            score = self.task_head(blended).squeeze(-1)  # (B,)
+
+        return score
+
+    def finetune_step(
+        self,
+        messages: torch.Tensor,
+        timestamps: torch.Tensor,
+        targets: torch.Tensor,
+        h_cycles: int | None = None,
+        l_cycles: int | None = None,
+    ) -> float:
+        """
+        Run one online adaptation step using the TRM recursive path.
+
+        This trains the refinement gate alongside the encoder, so the model
+        learns HOW to refine its reasoning from live data.
+        """
+        self.train()
+
+        predictions = self.forward_recursive(messages, timestamps, h_cycles, l_cycles)
+        loss = self.loss_fn(predictions, targets)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+        self.optimizer.step()
+
+        self._step_count += 1
+
+        if self._step_count % 50 == 0:
+            self._save_checkpoint()
+            logger.info(f"LOBERT TRM fine-tune step {self._step_count}, loss={loss.item():.4f}")
+
+        return loss.item()
+
+    def _save_checkpoint(self) -> None:
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        torch.save({
+            "model": self.state_dict(),
+            "optimizer": self.optimizer.state_dict(),
+            "step": self._step_count,
+        }, self.checkpoint_dir / LOBERT_CHECKPOINT_NAME)
+
+    def _load_checkpoint(self) -> None:
+        ckpt = self.checkpoint_dir / LOBERT_CHECKPOINT_NAME
+        if ckpt.exists():
+            try:
+                data = torch.load(ckpt, map_location=self.device, weights_only=True)
+                self.load_state_dict(data["model"])
+                self.optimizer.load_state_dict(data["optimizer"])
+                self._step_count = data.get("step", 0)
+                logger.info(f"Loaded LOBERT checkpoint (step {self._step_count})")
+            except Exception as e:
+                logger.warning(f"Failed to load LOBERT checkpoint: {e}")
 

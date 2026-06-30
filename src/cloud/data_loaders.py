@@ -25,31 +25,9 @@ class LOBERTDataset(Dataset):
         logger.info(f"Loading LOB data from {self.parquet_path}...")
         
         if not self.parquet_path.exists():
-            logger.warning(f"File {self.parquet_path} not found. Fetching real historical data from Binance instead of using dummy data!")
-            import requests
-            import time
-            import os
+            raise FileNotFoundError(f"Dataset {self.parquet_path} not found. The harness should have pre-seeded this!")
             
-            # Fetch last 1000 trades from Binance to bootstrap training
-            url = "https://api.binance.com/api/v3/trades?symbol=BTCUSDT&limit=1000"
-            resp = requests.get(url).json()
-            
-            # Convert to DataFrame
-            df_data = []
-            for t in resp:
-                df_data.append({
-                    "price": float(t["price"]),
-                    "volume": float(t["qty"]),
-                    "side": 1.0 if t["isBuyerMaker"] else 0.0,
-                    "order_type": 1.0,
-                    "timestamp_ms": t["time"]
-                })
-            self.df = pl.DataFrame(df_data)
-            self.parquet_path.parent.mkdir(parents=True, exist_ok=True)
-            self.df.write_parquet(self.parquet_path)
-            logger.info("Successfully bootstrapped real Kaggle dataset from Binance.")
-        else:
-            self.df = pl.read_parquet(self.parquet_path)
+        self.df = pl.read_parquet(self.parquet_path)
             
         assert len(self.df) > seq_len, "Not enough data in Parquet file."
         self.data = self.df[["price", "volume", "side", "order_type"]].to_numpy()
@@ -84,14 +62,13 @@ class FinCastDataset(Dataset):
         logger.info(f"Loading OHLCV data from {self.parquet_path}...")
         
         if not self.parquet_path.exists():
-            logger.warning(f"File {self.parquet_path} not found. Generating dummy data for training demo.")
-            self.num_samples = 10000
-            self.is_dummy = True
-        else:
-            self.df = pl.read_parquet(self.parquet_path).filter(pl.col("is_closed") == True)
-            self.data = self.df[["open", "high", "low", "close", "volume"]].to_numpy()
-            self.num_samples = len(self.df) - self.seq_len - 1 # Need +1 for the target
-            self.is_dummy = False
+            raise FileNotFoundError(f"Dataset {self.parquet_path} not found. The harness should have pre-seeded this!")
+            
+        self.df = pl.read_parquet(self.parquet_path).filter(pl.col("is_closed") == True)
+            
+        self.data = self.df[["open", "high", "low", "close", "volume"]].to_numpy()
+        self.num_samples = len(self.df) - self.seq_len - 1 # Need +1 for the target
+        self.is_dummy = False
 
     def __len__(self):
         return self.num_samples

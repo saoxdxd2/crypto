@@ -26,12 +26,29 @@ HF_TOKEN = os.environ.get("HF_TOKEN")
 REPO_ID = "sao/LOBERT-crypto-v1"
 
 def train(args):
+    # Set random seeds for deterministic splits and model weights
+    import random
+    import numpy as np
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Starting LOBERT Pre-Training on device: {device}")
     
     # 1. Initialize Dataset & DataLoader
     dataset = LOBERTDataset(args.data_path, seq_len=args.seq_len)
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+    
+    # 80/20 train/validation split
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+    
+    loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=2)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=2)
     
     # 2. Initialize Model, Optimizer, and Scaler
     model = LOBERTModel().to(device)
@@ -55,7 +72,7 @@ def train(args):
     # Using MSE for the target head (pattern score prediction proxy)
     criterion = nn.MSELoss()
     
-    best_loss = float('inf')
+    best_acc = 0.0
     model_dir = Path("checkpoints")
     model_dir.mkdir(exist_ok=True)
     
@@ -110,10 +127,37 @@ def train(args):
                         threading.Thread(target=push_model_to_hub, args=(ckpt_path,)).start()
         
         avg_loss = epoch_loss / len(loader)
-        logger.info(f"Epoch {epoch+1} completed. Average Loss: {avg_loss:.4f}")
+        logger.info(f"Epoch {epoch+1} training completed. Average Loss: {avg_loss:.4f}")
         
-        if avg_loss < best_loss:
-            best_loss = avg_loss
+        # --- Validation & Capability Benchmark ---
+        model.eval()
+        val_loss = 0.0
+        correct_direction = 0
+        total_samples = 0
+        
+        with torch.no_grad():
+            for messages, timestamps, targets in val_loader:
+                messages = messages.to(device)
+                timestamps = timestamps.to(device)
+                targets = targets.to(device)
+                
+                with autocast(enabled=args.fp16):
+                    outputs = model.forward_recursive(messages, timestamps)
+                    loss = criterion(outputs, targets)
+                val_loss += loss.item()
+                
+                pred_up = (outputs - 0.5) > 0
+                target_up = targets > 0
+                correct_direction += (pred_up == target_up).sum().item()
+                total_samples += targets.size(0)
+                
+        val_acc = correct_direction / total_samples if total_samples > 0 else 0.0
+        val_loss_avg = val_loss / len(val_loader) if len(val_loader) > 0 else 0.0
+        
+        logger.info(f"📊 Validation Benchmarks | Loss: {val_loss_avg:.6f} | Directional Acc: {val_acc:.4f} (Random Baseline: 0.5000)")
+        
+        if val_acc > best_acc:
+            best_acc = val_acc
             ckpt_path = model_dir / "lobert_checkpoint.pt"
             tmp_path = model_dir / "lobert_checkpoint.pt.tmp"
             checkpoint = {
@@ -136,6 +180,12 @@ def train(args):
                 import threading
                 threading.Thread(target=push_model_to_hub, args=(ckpt_path,)).start()
                 
+        if val_acc >= args.target_acc:
+            logger.info(f"🎯 Benchmark threshold met! Directional Accuracy {val_acc:.4f} >= {args.target_acc:.4f}. Stopping training.")
+            break
+        else:
+            logger.info(f"❌ Model accuracy ({val_acc:.4f}) below acceptable threshold ({args.target_acc:.4f}). Continuing training...")
+
         if args.unlimited:
             logger.info("Unlimited mode enabled. Resetting dataset for next pass...")
             pass
@@ -182,6 +232,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume_from_hub", action="store_true", help="Auto-download and resume from latest HF checkpoint")
     parser.add_argument("--save_every_steps", type=int, default=5000, help="Push to hub or sync to WS every N steps mid-epoch")
     parser.add_argument("--use_gdrive", action="store_true", help="Instantly copy checkpoints to mounted Google Drive")
+    parser.add_argument("--target_acc", type=float, default=0.55, help="Target directional validation accuracy (e.g. 0.55 for 55%) before stopping")
     
     args = parser.parse_args()
     if args.unlimited:
