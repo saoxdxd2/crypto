@@ -214,7 +214,10 @@ def main():
         repo_root = Path(__file__).resolve().parent.parent
         os.chdir(repo_root)
     except NameError:
-        pass
+        # User pasted the script directly into a Jupyter notebook cell
+        if IN_COLAB and Path("/content/crypto").exists():
+            os.chdir("/content/crypto")
+            sys.path.append("/content/crypto")
     
     import shutil
     if IN_COLAB and not shutil.which("aria2c"):
