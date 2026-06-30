@@ -124,11 +124,11 @@ class LOBERTModel(nn.Module):
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers, enable_nested_tensor=False)
         
         # Downstream task head: Predict pattern score (bullish/bearish microstructure)
+        # Note: We output raw logits here for BCEWithLogitsLoss numerical stability
         self.task_head = nn.Sequential(
             nn.Linear(d_model, 32),
             nn.GELU(),
-            nn.Linear(32, 1),
-            nn.Sigmoid()
+            nn.Linear(32, 1)
         )
 
         # ── TRM: Recursive Refinement Head ──
@@ -147,8 +147,13 @@ class LOBERTModel(nn.Module):
         self.device = torch.device("cpu")
         self.checkpoint_dir = LOBERT_CHECKPOINT_DIR
         self.optimizer = torch.optim.AdamW(self.parameters(), lr=LOBERT_FINETUNE_LR)
-        self.loss_fn = nn.MSELoss()
+        self.loss_fn = nn.BCEWithLogitsLoss()
         self._step_count = 0
+        
+        # ── Experience Replay Buffer & Gradient Accumulation ──
+        self.replay_buffer = []
+        self.max_buffer_size = 2000
+        self.grad_accum_steps = 4
 
         self._load_checkpoint()
 
@@ -228,28 +233,53 @@ class LOBERTModel(nn.Module):
         l_cycles: int | None = None,
     ) -> float:
         """
-        Run one online adaptation step using the TRM recursive path.
-
-        This trains the refinement gate alongside the encoder, so the model
-        learns HOW to refine its reasoning from live data.
+        Run one online adaptation step using the TRM recursive path,
+        enhanced with Experience Replay and Gradient Accumulation.
         """
         self.train()
+        
+        # 1. Update Replay Buffer with live data (detach to save memory)
+        B = messages.size(0)
+        for i in range(B):
+            self.replay_buffer.append((
+                messages[i].detach().cpu(), 
+                timestamps[i].detach().cpu(), 
+                targets[i].detach().cpu()
+            ))
+            
+        if len(self.replay_buffer) > self.max_buffer_size:
+            self.replay_buffer = self.replay_buffer[-self.max_buffer_size:]
+            
+        # 2. Sample from Replay Buffer (50% live, 50% historical)
+        import random
+        # We ensure we have enough data to sample a batch
+        sample_size = min(B, len(self.replay_buffer))
+        sampled = random.sample(self.replay_buffer, sample_size)
+        
+        b_msgs = torch.stack([x[0] for x in sampled]).to(self.device)
+        b_ts = torch.stack([x[1] for x in sampled]).to(self.device)
+        b_targ = torch.stack([x[2] for x in sampled]).to(self.device)
 
-        predictions = self.forward_recursive(messages, timestamps, h_cycles, l_cycles)
-        loss = self.loss_fn(predictions, targets)
-
-        self.optimizer.zero_grad()
+        # 3. Forward Pass & Loss
+        predictions = self.forward_recursive(b_msgs, b_ts, h_cycles, l_cycles)
+        
+        # Scale loss by accumulation steps
+        loss = self.loss_fn(predictions, b_targ) / self.grad_accum_steps
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-        self.optimizer.step()
-
+        
         self._step_count += 1
+        
+        # 4. Gradient Accumulation Step
+        if self._step_count % self.grad_accum_steps == 0:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), 1.0)
+            self.optimizer.step()
+            self.optimizer.zero_grad()
 
         if self._step_count % 50 == 0:
             self._save_checkpoint()
-            logger.info(f"LOBERT TRM fine-tune step {self._step_count}, loss={loss.item():.4f}")
+            logger.info(f"LOBERT TRM fine-tune step {self._step_count}, loss={(loss.item() * self.grad_accum_steps):.4f}")
 
-        return loss.item()
+        return loss.item() * self.grad_accum_steps
 
     def _save_checkpoint(self) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)

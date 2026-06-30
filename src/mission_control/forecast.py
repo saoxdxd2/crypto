@@ -124,8 +124,13 @@ class FinCastForecaster:
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=FINCAST_FINETUNE_LR, weight_decay=FINCAST_WEIGHT_DECAY
         )
-        self.loss_fn = nn.MSELoss()
+        self.loss_fn = nn.HuberLoss()
         self._step_count = 0
+        
+        # ── Experience Replay Buffer & Gradient Accumulation ──
+        self.replay_buffer = []
+        self.max_buffer_size = 2000
+        self.grad_accum_steps = 4
 
         self._load_checkpoint()
 
@@ -135,41 +140,58 @@ class FinCastForecaster:
         target_returns: list[float],
     ) -> float:
         """
-        Run one online adaptation step (forward + backward + optimizer step).
-
-        Args:
-            ohlcv_windows: List of numpy arrays, each shape (SeqLen, 5) — OHLCV candles
-            target_returns: List of floats — ground-truth next-candle returns
-
-        Returns:
-            Training loss (float)
+        Run one online adaptation step (forward + backward + optimizer step),
+        enhanced with Experience Replay and Gradient Accumulation.
         """
         if not ohlcv_windows:
             return 0.0
 
         self.model.train()
+        
+        # 1. Update Replay Buffer with live data
+        B = len(ohlcv_windows)
+        for i in range(B):
+            self.replay_buffer.append((
+                ohlcv_windows[i], 
+                target_returns[i]
+            ))
+            
+        if len(self.replay_buffer) > self.max_buffer_size:
+            self.replay_buffer = self.replay_buffer[-self.max_buffer_size:]
+            
+        # 2. Sample from Replay Buffer (50% live, 50% historical)
+        import random
+        sample_size = min(B, len(self.replay_buffer))
+        sampled = random.sample(self.replay_buffer, sample_size)
+        
+        b_ohlcv = [x[0] for x in sampled]
+        b_targ = [x[1] for x in sampled]
 
         # Stack numpy arrays into a single tensor: (B, SeqLen, 5)
-        x = torch.tensor(np.stack(ohlcv_windows), dtype=torch.float32).to(self.device)
-        y = torch.tensor(target_returns, dtype=torch.float32).to(self.device)
+        x = torch.tensor(np.stack(b_ohlcv), dtype=torch.float32).to(self.device)
+        y = torch.tensor(b_targ, dtype=torch.float32).to(self.device)
 
-        # Forward: use the last timestep's prediction as the forecast
+        # 3. Forward Pass & Loss
         predictions = self.model(x)  # (B, SeqLen)
         pred_last = predictions[:, -1]  # (B,)
-        loss = self.loss_fn(pred_last, y)
-
-        self.optimizer.zero_grad()
+        
+        # Scale loss by accumulation steps
+        loss = self.loss_fn(pred_last, y) / self.grad_accum_steps
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-        self.optimizer.step()
 
         self._step_count += 1
 
+        # 4. Gradient Accumulation Step
+        if self._step_count % self.grad_accum_steps == 0:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.optimizer.step()
+            self.optimizer.zero_grad()
+
         if self._step_count % 50 == 0:
             self._save_checkpoint()
-            logger.info(f"FinCast fine-tune step {self._step_count}, loss={loss.item():.6f}")
+            logger.info(f"FinCast fine-tune step {self._step_count}, loss={(loss.item() * self.grad_accum_steps):.6f}")
 
-        return loss.item()
+        return loss.item() * self.grad_accum_steps
 
     def _save_checkpoint(self) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)

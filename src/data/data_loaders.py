@@ -43,10 +43,11 @@ class LOBERTDataset(Dataset):
         ts_seq = torch.tensor(self.timestamps[idx:idx+self.seq_len], dtype=torch.float32)
         ts_seq = ts_seq - ts_seq[0] 
         
-        # Target: future price return (next message price - current last message price)
+        # Target: probability of price going up (1.0 if next_price > current_price else 0.0)
         current_price = self.data[idx+self.seq_len-1, 0]
         next_price = self.data[idx+self.seq_len, 0]
-        target = torch.tensor((next_price - current_price) / current_price, dtype=torch.float32)
+        raw_return = (next_price - current_price) / current_price
+        target = torch.tensor(1.0 if raw_return > 0 else 0.0, dtype=torch.float32)
         
         return messages, ts_seq, target
 
