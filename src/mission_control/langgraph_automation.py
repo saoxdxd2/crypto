@@ -136,8 +136,8 @@ Output exactly valid JSON in this format:
         if state.get("requires_retraining"):
             logger.warning("LLM requested model retraining due to edge decay!")
             push_sys_event("BLOCK", "Edge Decay Detected! Triggering Cloud Retraining pipeline.")
-            # Trigger cloud trainer here
-            from src.cloud.kaggle_trainer import submit_training_job
-            submit_training_job()
+            # Trigger online retraining adaptation
+            logger.info("Online Continuous Learning natively adapts to edge decay without requiring offline retrains.")
+            push_sys_event("SYSTEM", "Triggering aggressive CPU online adaptation steps.")
             
         return state

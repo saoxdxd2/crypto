@@ -9,7 +9,7 @@ import typer
 
 from crypto_research.baselines.catalog import baseline_catalog
 from src.data.binance_public import download_daily_candles
-from src.cloud.dataset_inventory import assert_required_candles, load_metadata
+from src.data.dataset_inventory import assert_required_candles, load_metadata
 from src.core.duckdb_queries import query_candles
 from src.data.ingest import import_candle_zips
 from src.core.paths import DataPaths

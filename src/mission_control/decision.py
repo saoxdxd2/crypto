@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from src.mission_control.flaml_optimizer import FlamlOptimizer
 
 if TYPE_CHECKING:
-    from src.cloud.rl_agent import PPOAgent
+    from src.execution.rl_agent import PPOAgent
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ class DeterministicDecisionMath:
 
             # Phase 14: RL agent modulates size (0.0–1.0 scalar)
             if self.rl_agent is not None:
-                from src.cloud.rl_agent import build_state_vector
+                from src.execution.rl_agent import build_state_vector
                 state = build_state_vector(
                     signal={"net_edge": net_edge},
                     news=news_event,

@@ -607,9 +607,9 @@ class CyberQuantDashboard(ctk.CTk):
         
         def run_kaggle():
             try:
-                from src.cloud.kaggle_trainer import submit_training_job
-                submit_training_job()
-                self.after(0, lambda: self.btn_manual_retrain.configure(text="✅ PUSHED TO QUEUE", fg_color=GREEN, text_color="black"))
+                # Kaggle trainer has been removed.
+                logger.info("Kaggle training has been permanently removed.")
+                self.after(0, lambda: self.btn_manual_retrain.configure(text="✅ CLOUD REMOVED", fg_color=GREEN, text_color="black"))
                 self.after(3000, lambda: self.btn_manual_retrain.configure(text="FORCE KAGGLE RETRAIN", fg_color="#8a2be2", text_color="white", state="normal"))
             except Exception as e:
                 logger.error(f"Kaggle Push Failed: {e}")
