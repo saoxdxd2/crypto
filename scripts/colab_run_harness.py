@@ -69,7 +69,6 @@ class BinanceArchiveFetcher:
         
         fallback_used = False
         try:
-            import os
             import pyarrow as pa
             import pyarrow.parquet as pq
             
@@ -158,7 +157,6 @@ class BinanceArchiveFetcher:
         
         fallback_used = False
         try:
-            import os
             import pyarrow as pa
             import pyarrow.parquet as pq
             
