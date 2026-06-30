@@ -324,10 +324,14 @@ def main():
         os.chdir(repo_root)
     except NameError:
         # Interactive IPython/Colab cell execution
-        if os.path.exists("/content/crypto/crypto/scripts/fast_fetch.go"):
+        if os.path.exists("/content/crypto/crypto/src/cloud/train_lobert.py"):
             os.chdir("/content/crypto/crypto")
-        elif os.path.exists("/content/crypto/scripts/fast_fetch.go"):
+        elif os.path.exists("/content/crypto/src/cloud/train_lobert.py"):
             os.chdir("/content/crypto")
+        elif not os.path.exists("src/cloud/train_lobert.py"):
+            print("❌ Cannot find 'src' directory! Make sure you are running this cell after 'git clone https://github.com/saoxdxd2/crypto.git'")
+            import sys
+            sys.exit(1)
     
     import shutil
     if not shutil.which("go"):
