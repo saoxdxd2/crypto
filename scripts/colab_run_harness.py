@@ -336,8 +336,11 @@ def main():
         
     if not os.path.exists("fast_fetch") and not os.path.exists("fast_fetch.exe"):
         print("🚀 Compiling Go Fetcher...")
-        if os.system("go build -o fast_fetch scripts/fast_fetch.go") != 0:
-            print("❌ Failed to compile Go Fetcher! Make sure Golang is installed correctly.")
+        import subprocess
+        compile_res = subprocess.run(["go", "build", "-o", "fast_fetch", "scripts/fast_fetch.go"], capture_output=True, text=True)
+        if compile_res.returncode != 0:
+            print(f"❌ Failed to compile Go Fetcher! Make sure Golang is installed correctly.")
+            print(f"[Go Build Output]:\n{compile_res.stdout}\n{compile_res.stderr}")
             sys.exit(1)
 
     # Ensure cudf is available or fallback
