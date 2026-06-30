@@ -346,9 +346,17 @@ def main():
                     break
                     
         if not found:
-            print("❌ Cannot find 'src' directory! Make sure you are running this cell after 'git clone https://github.com/saoxdxd2/crypto.git'")
-            import sys
-            sys.exit(1)
+            print("⚠️ Cannot find 'src' directory! Colab instances wipe files after inactivity.")
+            print("🚀 Auto-cloning repository https://github.com/saoxdxd2/crypto.git...")
+            import os
+            os.system("git clone https://github.com/saoxdxd2/crypto.git")
+            if os.path.exists("crypto/src/cloud/train_lobert.py"):
+                os.chdir("crypto")
+                print("✅ Successfully cloned and entered repository!")
+            else:
+                print("❌ Failed to clone repository! Please run '!git clone https://github.com/saoxdxd2/crypto.git' manually.")
+                import sys
+                sys.exit(1)
     
     import shutil
     if not shutil.which("go"):
