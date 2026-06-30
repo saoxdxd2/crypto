@@ -389,12 +389,22 @@ def main():
     max_loops = 5
     
     # Pre-seed datasets for loop 1
+    def verify_parquet(path: Path) -> bool:
+        if not path.exists(): return False
+        try:
+            with open(path, "rb") as f:
+                f.seek(-4, 2)
+                return f.read() == b"PAR1"
+        except Exception:
+            return False
+
     lob_path = Path("data/lob_history.parquet")
     ohlcv_path = Path("data/ohlcv_history.parquet")
-    if not lob_path.exists() or lob_path.stat().st_size < 1024 * 1024:
+    
+    if not verify_parquet(lob_path):
         if lob_path.exists(): os.remove(lob_path)
         BinanceArchiveFetcher.fetch_trades("BTCUSDT", "2023", "01", lob_path)
-    if not ohlcv_path.exists() or ohlcv_path.stat().st_size < 1024 * 1024:
+    if not verify_parquet(ohlcv_path):
         if ohlcv_path.exists(): os.remove(ohlcv_path)
         BinanceArchiveFetcher.fetch_klines("BTCUSDT", "2023", "01", ohlcv_path)
         
